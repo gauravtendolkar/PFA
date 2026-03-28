@@ -167,3 +167,21 @@ export async function getSessions(): Promise<Session[]> {
   const res = await fetch('/agent/sessions');
   return res.json();
 }
+
+/** Load messages for a session and convert to UI ChatMessage format */
+export async function loadSessionMessages(sessionId: string): Promise<{ role: 'user' | 'agent'; content: string; timestamp?: string }[]> {
+  const res = await fetch(`/agent/sessions/${sessionId}/messages`);
+  const raw = await res.json() as { role: string; content: string | null }[];
+  const uiMessages: { role: 'user' | 'agent'; content: string; timestamp?: string }[] = [];
+
+  for (const msg of raw) {
+    if (msg.role === 'user' && msg.content) {
+      uiMessages.push({ role: 'user', content: msg.content });
+    } else if (msg.role === 'assistant' && msg.content) {
+      uiMessages.push({ role: 'agent', content: msg.content });
+    }
+    // Skip system, tool messages — they're internal
+  }
+
+  return uiMessages;
+}

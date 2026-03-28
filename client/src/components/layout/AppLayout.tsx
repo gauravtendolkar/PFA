@@ -6,7 +6,7 @@ import DashboardPanel from "../dashboard/DashboardPanel";
 import ActivityPanel from "../activity/ActivityPanel";
 import logoImg from "@/assets/logo.png";
 import type { ChatMessage } from "../chat/ChatArea";
-import { sendMessageStream, getSessions, type ToolCallResult, type ActivityItem, type Session } from "@/lib/api";
+import { sendMessageStream, getSessions, loadSessionMessages, type ToolCallResult, type ActivityItem, type Session } from "@/lib/api";
 
 const AppLayout = () => {
   const [leftOpen, setLeftOpen] = useState(true);
@@ -27,10 +27,10 @@ const AppLayout = () => {
   useEffect(() => {
     getSessions().then(raw => {
       setSessions(raw
-        .filter((s: Session) => s.source === 'user_chat')
+        .filter((s: Session) => s.source === 'user_chat' && s.message_count > 0)
         .map((s: Session) => ({
           id: s.id,
-          title: s.title || formatSessionDate(s.created_at),
+          title: s.title || 'New chat',
           preview: `${s.message_count} messages`,
           date: formatRelativeDate(s.created_at),
           active: s.id === sessionId,
@@ -136,13 +136,23 @@ const AppLayout = () => {
     setLastActivity({ items: [], elapsed: 0 });
   }, []);
 
-  const handleSelectSession = useCallback((id: string) => {
+  const handleSelectSession = useCallback(async (id: string, dismissSidebar = false) => {
     setSessionId(id);
-    setMessages([]);
     setToolResults([]);
     setActivityItems([]);
     setLastActivity({ items: [], elapsed: 0 });
-    setLeftOpen(false);
+    if (dismissSidebar) setLeftOpen(false);
+
+    try {
+      const pastMessages = await loadSessionMessages(id);
+      setMessages(pastMessages.map((m, i) => ({
+        id: `${id}-${i}`,
+        role: m.role,
+        content: m.content,
+      })));
+    } catch {
+      setMessages([]);
+    }
   }, []);
 
   const toggleRightPanel = useCallback((panel: 'dashboard' | 'activity') => {
@@ -171,13 +181,13 @@ const AppLayout = () => {
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="hidden md:flex">
-          <ChatHistory sessions={sessions} onSelect={handleSelectSession} onNew={handleNewSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
+          <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id)} onNew={handleNewSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
         </div>
         {leftOpen && (
           <div className="md:hidden fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-foreground/10 backdrop-blur-sm" onClick={() => setLeftOpen(false)} />
             <div className="relative z-10">
-              <ChatHistory sessions={sessions} onSelect={(id) => { handleSelectSession(id); setLeftOpen(false); }} onNew={handleNewSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
+              <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id, true)} onNew={handleNewSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
             </div>
           </div>
         )}
@@ -211,11 +221,15 @@ function formatSessionDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 function formatRelativeDate(iso: string): string {
-  const diffDays = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  if (diffDays === 0) return 'Today';
+  const now = new Date();
+  const d = new Date(iso + (iso.includes('T') ? '' : 'T00:00:00'));
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dateStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((todayStart.getTime() - dateStart.getTime()) / 86400000);
+  if (diffDays <= 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays} days ago`;
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 export default AppLayout;

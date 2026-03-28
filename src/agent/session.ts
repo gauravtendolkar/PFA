@@ -45,6 +45,15 @@ export function saveMessage(sessionId: string, msg: ChatMessage): void {
   );
 
   db.prepare("UPDATE sessions SET message_count = message_count + 1, updated_at = datetime('now') WHERE id = ?").run(sessionId);
+
+  // Auto-set title from first user message
+  if (msg.role === 'user' && msg.content) {
+    const session = db.prepare('SELECT title FROM sessions WHERE id = ?').get(sessionId) as { title: string | null } | undefined;
+    if (session && !session.title) {
+      const title = msg.content.length > 20 ? msg.content.slice(0, 20) + '...' : msg.content;
+      db.prepare('UPDATE sessions SET title = ? WHERE id = ?').run(title, sessionId);
+    }
+  }
 }
 
 export function getSessionMessages(sessionId: string): ChatMessage[] {

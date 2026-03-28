@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Build output
+dist/
+client/dist/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Database (contains user financial data)
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+.pfa/
+
+# Python venv
+.venv/
+
+# LLM models (multi-GB files)
+models/
+*.gguf
+
+# Built binaries
+bin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temp
+/tmp/

@@ -1,0 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 40 20% 97%;
+    --foreground: 30 10% 12%;
+
+    --card: 40 15% 99%;
+    --card-foreground: 30 10% 12%;
+
+    --popover: 40 15% 99%;
+    --popover-foreground: 30 10% 12%;
+
+    --primary: 30 10% 12%;
+    --primary-foreground: 40 20% 97%;
+
+    --secondary: 40 10% 93%;
+    --secondary-foreground: 30 10% 12%;
+
+    --muted: 40 10% 94%;
+    --muted-foreground: 30 5% 46%;
+
+    --accent: 320 45% 42%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 65% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 40 10% 90%;
+    --input: 40 10% 90%;
+    --ring: 320 45% 42%;
+    --radius: 0.5rem;
+
+    --sidebar-background: 40 15% 99%;
+    --sidebar-foreground: 30 5% 40%;
+    --sidebar-primary: 30 10% 12%;
+    --sidebar-primary-foreground: 40 20% 97%;
+    --sidebar-accent: 40 10% 95%;
+    --sidebar-accent-foreground: 30 10% 12%;
+    --sidebar-border: 40 10% 92%;
+    --sidebar-ring: 320 45% 42%;
+
+    --surface-elevated: 40 15% 99%;
+    --surface-sunken: 40 15% 96%;
+    --chat-user: 30 10% 12%;
+    --chat-user-foreground: 40 20% 97%;
+    --chat-agent: 40 10% 95%;
+    --chat-agent-foreground: 30 10% 12%;
+    --shadow-sm: 0 1px 2px hsl(30 10% 12% / 0.03);
+    --shadow-md: 0 4px 16px hsl(30 10% 12% / 0.05);
+    --shadow-lg: 0 8px 30px hsl(30 10% 12% / 0.07);
+    --chart-positive: 152 55% 38%;
+    --chart-negative: 0 65% 51%;
+    --chart-neutral: 30 5% 46%;
+  }
+
+  .dark {
+    --background: 240 8% 6%;
+    --foreground: 40 10% 92%;
+
+    --card: 240 6% 9%;
+    --card-foreground: 40 10% 92%;
+
+    --popover: 240 6% 9%;
+    --popover-foreground: 40 10% 92%;
+
+    --primary: 40 10% 92%;
+    --primary-foreground: 240 8% 6%;
+
+    --secondary: 240 5% 14%;
+    --secondary-foreground: 40 10% 92%;
+
+    --muted: 240 5% 14%;
+    --muted-foreground: 240 4% 50%;
+
+    --accent: 320 50% 55%;
+    --accent-foreground: 240 8% 6%;
+
+    --destructive: 0 55% 45%;
+    --destructive-foreground: 40 10% 92%;
+
+    --border: 240 5% 16%;
+    --input: 240 5% 16%;
+    --ring: 320 50% 55%;
+
+    --sidebar-background: 240 6% 8%;
+    --sidebar-foreground: 240 4% 55%;
+    --sidebar-primary: 40 10% 92%;
+    --sidebar-primary-foreground: 240 8% 6%;
+    --sidebar-accent: 240 5% 12%;
+    --sidebar-accent-foreground: 40 10% 92%;
+    --sidebar-border: 240 5% 13%;
+    --sidebar-ring: 320 50% 55%;
+
+    --surface-elevated: 240 6% 10%;
+    --surface-sunken: 240 8% 4%;
+    --chat-user: 320 50% 55%;
+    --chat-user-foreground: 0 0% 100%;
+    --chat-agent: 240 5% 12%;
+    --chat-agent-foreground: 40 10% 92%;
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.2);
+    --shadow-md: 0 4px 16px hsl(0 0% 0% / 0.3);
+    --shadow-lg: 0 8px 30px hsl(0 0% 0% / 0.4);
+    --chart-positive: 152 55% 45%;
+    --chart-negative: 0 55% 50%;
+    --chart-neutral: 240 4% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    letter-spacing: 0.01em;
+  }
+}
+
+@layer components {
+  .glass-surface {
+    @apply bg-card border border-border;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .glass-surface-strong {
+    @apply bg-card border border-border;
+    box-shadow: var(--shadow-md);
+  }
+
+  .font-display {
+    font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    letter-spacing: 0;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 20px;
+  }
+
+  .gradient-text {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--foreground)) 40%,
+      hsl(var(--accent)) 60%,
+      hsl(var(--muted-foreground)) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: gradient-flow 2s ease infinite;
+  }
+
+  @keyframes gradient-flow {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+}

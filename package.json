@@ -1,0 +1,34 @@
+{
+  "name": "pfa",
+  "version": "0.1.0",
+  "description": "Personal Finance Agent — on-device AI agent for personal finance",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "plaid:link": "tsx src/plaid/link-cli.ts",
+    "plaid:sync": "tsx src/plaid/sync.ts",
+    "test": "vitest run",
+    "agent": "tsx src/agent/cli.ts",
+    "serve": "tsx src/agent/server.ts",
+    "client": "cd client && npx vite --port 5173",
+    "dev:all": "npm run serve & cd client && npx vite --port 5173"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^17.3.1",
+    "plaid": "^41.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "@types/uuid": "^10.0.0",
+    "vitest": "^4.1.1"
+  }
+}

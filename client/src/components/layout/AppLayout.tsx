@@ -10,26 +10,52 @@ import logoImg from "@/assets/logo.png";
 import type { ChatMessage } from "../chat/ChatArea";
 import { sendMessageStream, getSessions, loadSessionMessages, type ToolCallResult, type ActivityItem, type Session } from "@/lib/api";
 
+/** Per-session state that persists across session switches */
+interface SessionState {
+  messages: ChatMessage[];
+  isProcessing: boolean;
+  statusText: string;
+  streamingText: string;
+  activityItems: ActivityItem[];
+  lastActivity: { items: ActivityItem[]; elapsed: number };
+  elapsed: number;
+  toolResults: ToolCallResult[];
+  abortController: AbortController | null;
+  timerInterval: ReturnType<typeof setInterval> | null;
+  startTime: number;
+}
+
+function emptySessionState(): SessionState {
+  return {
+    messages: [], isProcessing: false, statusText: "", streamingText: "",
+    activityItems: [], lastActivity: { items: [], elapsed: 0 }, elapsed: 0,
+    toolResults: [], abortController: null, timerInterval: null, startTime: 0,
+  };
+}
 
 const AppLayout = () => {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightPanel, setRightPanel] = useState<'none' | 'dashboard' | 'activity'>('none');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [statusText, setStatusText] = useState("");
-  const [streamingText, setStreamingText] = useState(""); // final response streaming
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<{ id: string; title: string; preview: string; date: string; active?: boolean }[]>([]);
-  const [toolResults, setToolResults] = useState<ToolCallResult[]>([]);
-  const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
-  const [lastActivity, setLastActivity] = useState<{ items: ActivityItem[]; elapsed: number }>({ items: [], elapsed: 0 });
-  const [elapsed, setElapsed] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval>>(null);
-  const startTimeRef = useRef(0);
 
-  useEffect(() => {
+  // Per-session state lives in a ref map; we copy the current session's state
+  // into React state for rendering via a render trigger.
+  const statesRef = useRef<Map<string | null, SessionState>>(new Map());
+  const [, forceRender] = useState(0);
+  const rerender = useCallback(() => forceRender(n => n + 1), []);
+
+  function getState(sid: string | null): SessionState {
+    if (!statesRef.current.has(sid)) statesRef.current.set(sid, emptySessionState());
+    return statesRef.current.get(sid)!;
+  }
+
+  // Current session's state for rendering
+  const cur = getState(sessionId);
+
+  const refreshSessions = useCallback(() => {
     getSessions().then(raw => {
       setSessions(raw
         .filter((s: Session) => s.source === 'user_chat' && s.message_count > 0)
@@ -38,144 +64,171 @@ const AppLayout = () => {
           title: s.title || 'New chat',
           preview: `${s.message_count} messages`,
           date: formatRelativeDate(s.created_at),
-          active: s.id === sessionId,
         })));
     }).catch(() => {});
-  }, [sessionId]);
+  }, []);
+
+  useEffect(() => { refreshSessions(); }, [refreshSessions]);
 
   const handleSend = useCallback(async (content: string) => {
-    setMessages(prev => [...prev, {
+    // Capture the session ID at send time — this request belongs to THIS session
+    const sendSid = sessionId;
+    const state = getState(sendSid);
+
+    // Abort any previous in-flight request for this session
+    if (state.abortController) state.abortController.abort();
+    const controller = new AbortController();
+    state.abortController = controller;
+
+    // Add user message
+    state.messages = [...state.messages, {
       id: Date.now().toString(),
       role: "user" as const,
       content,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    }]);
+    }];
+    state.isProcessing = true;
+    state.statusText = "Thinking...";
+    state.streamingText = "";
+    state.activityItems = [];
+    state.elapsed = 0;
+    state.startTime = Date.now();
 
-    setIsProcessing(true);
-    setStatusText("Thinking...");
-    setStreamingText("");
-    setActivityItems([]);
-    setElapsed(0);
-    startTimeRef.current = Date.now();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    if (state.timerInterval) clearInterval(state.timerInterval);
+    state.timerInterval = setInterval(() => {
+      state.elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+      if (sessionId === sendSid) rerender();
     }, 1000);
+
+    rerender();
+
+    // Helper: update state and trigger re-render only if this session is visible
+    const update = (fn: (s: SessionState) => void) => {
+      fn(state);
+      // Always rerender — React will diff and skip if sessionId changed
+      rerender();
+    };
 
     try {
       await sendMessageStream(content, {
         onActivity(item) {
-          setActivityItems(prev => {
-            // Thinking streams in real-time — update last thinking item in place
-            if (item.kind === 'thinking' && prev.length > 0 && prev[prev.length - 1].kind === 'thinking') {
-              const updated = [...prev];
-              updated[updated.length - 1] = item;
-              return updated;
+          update(s => {
+            if (item.kind === 'thinking' && s.activityItems.length > 0 && s.activityItems[s.activityItems.length - 1].kind === 'thinking') {
+              s.activityItems = [...s.activityItems.slice(0, -1), item];
+            } else {
+              s.activityItems = [...s.activityItems, item];
             }
-            return [...prev, item];
           });
         },
         onStatusChange(status) {
-          setStatusText(status);
+          update(s => { s.statusText = status; });
         },
         onStreamText(fullText) {
-          // This is final response text streaming into chat
-          setStreamingText(fullText);
+          update(s => { s.streamingText = fullText; });
         },
         onDone(event) {
-          setSessionId(event.session_id);
+          // If this was a new session (sendSid was null), adopt the server-assigned ID
+          if (sendSid === null && event.session_id) {
+            // Move state from null key to the real session ID
+            statesRef.current.set(event.session_id, state);
+            statesRef.current.delete(null);
+            setSessionId(event.session_id);
+          }
 
           for (const tc of event.tool_calls_made) {
-            setToolResults(prev => {
-              const updated = [...prev];
-              const idx = updated.findIndex(t => t.name === tc.name);
-              if (idx >= 0) updated[idx] = tc; else updated.push(tc);
-              return updated;
-            });
-          }
-          if (event.tool_calls_made.length > 0 && rightPanel !== 'activity') {
-            setRightPanel('dashboard');
+            const idx = state.toolResults.findIndex(t => t.name === tc.name);
+            const updated = [...state.toolResults];
+            if (idx >= 0) updated[idx] = tc; else updated.push(tc);
+            state.toolResults = updated;
           }
 
-          // Snapshot activity for this turn, attach to message
-          setActivityItems(current => {
-            const finalElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-            setLastActivity({ items: current, elapsed: finalElapsed });
+          const finalElapsed = Math.floor((Date.now() - state.startTime) / 1000);
+          state.lastActivity = { items: state.activityItems, elapsed: finalElapsed };
+          state.messages = [...state.messages, {
+            id: (Date.now() + 1).toString(),
+            role: "agent" as const,
+            content: event.message,
+            activity: state.activityItems.length > 0 ? [...state.activityItems] : undefined,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          }];
 
-            setMessages(prev => [...prev, {
-              id: (Date.now() + 1).toString(),
-              role: "agent" as const,
-              content: event.message,
-              activity: current.length > 0 ? [...current] : undefined,
-              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-            }]);
-
-            return current;
-          });
           cleanup();
+          refreshSessions();
+          rerender();
         },
         onError(msg) {
-          setMessages(prev => [...prev, {
+          state.messages = [...state.messages, {
             id: (Date.now() + 1).toString(),
             role: "agent" as const,
             content: `Error: ${msg}`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          }]);
+          }];
           cleanup();
+          rerender();
         },
-      }, sessionId ?? undefined);
+      }, sendSid ?? undefined, controller.signal);
     } catch (err) {
-      setMessages(prev => [...prev, {
+      if (controller.signal.aborted) return; // intentional abort, ignore
+      state.messages = [...state.messages, {
         id: (Date.now() + 1).toString(),
         role: "agent" as const,
         content: `Connection error: ${err instanceof Error ? err.message : 'Unknown'}`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      }]);
+      }];
       cleanup();
+      rerender();
     }
 
     function cleanup() {
-      setIsProcessing(false);
-      setStreamingText("");
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      state.isProcessing = false;
+      state.streamingText = "";
+      state.abortController = null;
+      if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null; }
     }
-  }, [sessionId, rightPanel]);
+  }, [sessionId, rerender, refreshSessions]);
 
   const handleDeleteSession = useCallback(async (id: string) => {
     await fetch(`/agent/sessions/${id}`, { method: 'DELETE' });
+    statesRef.current.delete(id);
     setSessions(prev => prev.filter(s => s.id !== id));
     if (sessionId === id) {
       setSessionId(null);
-      setMessages([]);
+      rerender();
     }
-  }, [sessionId]);
+  }, [sessionId, rerender]);
 
   const handleNewSession = useCallback(() => {
+    // Don't abort running requests — they continue in background for their session
     setSessionId(null);
-    setMessages([]);
-    setToolResults([]);
-    setActivityItems([]);
-    setLastActivity({ items: [], elapsed: 0 });
-  }, []);
+    // Ensure clean state for the new null session
+    statesRef.current.set(null, emptySessionState());
+    rerender();
+  }, [rerender]);
 
   const handleSelectSession = useCallback(async (id: string, dismissSidebar = false) => {
     setSessionId(id);
-    setToolResults([]);
-    setActivityItems([]);
-    setLastActivity({ items: [], elapsed: 0 });
     if (dismissSidebar) setLeftOpen(false);
 
+    // If we already have state for this session (e.g. it's still processing), just show it
+    if (statesRef.current.has(id)) {
+      rerender();
+      return;
+    }
+
+    // Otherwise load from server
+    const state = emptySessionState();
     try {
       const pastMessages = await loadSessionMessages(id);
-      setMessages(pastMessages.map((m, i) => ({
+      state.messages = pastMessages.map((m, i) => ({
         id: `${id}-${i}`,
         role: m.role,
         content: m.content,
         activity: m.activity,
-      })));
-    } catch {
-      setMessages([]);
-    }
-  }, []);
+      }));
+    } catch { /* empty */ }
+    statesRef.current.set(id, state);
+    rerender();
+  }, [rerender]);
 
   const toggleRightPanel = useCallback((panel: 'dashboard' | 'activity') => {
     setRightPanel(prev => prev === panel ? 'none' : panel);
@@ -183,13 +236,17 @@ const AppLayout = () => {
 
   const handleShowActivity = useCallback((activity?: ActivityItem[]) => {
     if (activity) {
-      setLastActivity({ items: activity, elapsed: 0 });
+      const state = getState(sessionId);
+      state.lastActivity = { items: activity, elapsed: 0 };
     }
     setRightPanel('activity');
-  }, []);
+  }, [sessionId]);
 
-  const displayActivity = isProcessing ? { items: activityItems, elapsed } : lastActivity;
+  const displayActivity = cur.isProcessing ? { items: cur.activityItems, elapsed: cur.elapsed } : cur.lastActivity;
   const hasActivity = displayActivity.items.length > 0;
+
+  // Mark active session in sidebar
+  const sessionsWithActive = sessions.map(s => ({ ...s, active: s.id === sessionId }));
 
   return (
     <div className="h-dvh flex flex-col bg-background">
@@ -219,23 +276,23 @@ const AppLayout = () => {
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="hidden md:flex">
-          <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
+          <ChatHistory sessions={sessionsWithActive} onSelect={(id) => handleSelectSession(id)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
         </div>
         {leftOpen && (
           <div className="md:hidden fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-foreground/10 backdrop-blur-sm" onClick={() => setLeftOpen(false)} />
             <div className="relative z-10">
-              <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id, true)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
+              <ChatHistory sessions={sessionsWithActive} onSelect={(id) => handleSelectSession(id, true)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
             </div>
           </div>
         )}
 
         <div className="flex-1 min-w-0">
           <ChatArea
-            messages={messages}
-            isProcessing={isProcessing}
-            statusText={statusText}
-            streamingText={streamingText}
+            messages={cur.messages}
+            isProcessing={cur.isProcessing}
+            statusText={cur.statusText}
+            streamingText={cur.streamingText}
             hasActivity={hasActivity}
             onSend={handleSend}
             onShowActivity={handleShowActivity}
@@ -244,10 +301,10 @@ const AppLayout = () => {
 
         <div className="hidden md:flex">
           {rightPanel === 'dashboard' && (
-            <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={toolResults} />
+            <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={cur.toolResults} />
           )}
           {rightPanel === 'activity' && (
-            <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={isProcessing} />
+            <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={cur.isProcessing} />
           )}
         </div>
         {rightPanel !== 'none' && (
@@ -255,10 +312,10 @@ const AppLayout = () => {
             <div className="absolute inset-0 bg-foreground/10 backdrop-blur-sm" onClick={() => setRightPanel('none')} />
             <div className="relative z-10">
               {rightPanel === 'dashboard' && (
-                <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={toolResults} />
+                <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={cur.toolResults} />
               )}
               {rightPanel === 'activity' && (
-                <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={isProcessing} />
+                <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={cur.isProcessing} />
               )}
             </div>
           </div>
@@ -271,9 +328,6 @@ const AppLayout = () => {
   );
 };
 
-function formatSessionDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 function formatRelativeDate(iso: string): string {
   const now = new Date();
   const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));

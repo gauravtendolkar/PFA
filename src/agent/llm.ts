@@ -150,7 +150,6 @@ export async function chatCompletionStream(
     return { role: m.role, content: m.content || '' };
   });
 
-  console.log('[LLM] Sending streaming request to', cfg.baseUrl);
 
   const requestStartTime = performance.now();
 
@@ -175,7 +174,6 @@ export async function chatCompletionStream(
     throw new Error(`LLM request failed (${res.status}): ${text}`);
   }
 
-  console.log('[LLM] Stream started');
 
   const body = res.body;
   if (!body) throw new Error('Response body is null');
@@ -291,27 +289,8 @@ export async function chatCompletionStream(
   const predictedTps = lastChunkTimings?.predicted_per_second ?? 0;
   const totalPromptTokens = cacheN + promptN;
 
-  console.log(`[LLM] Stream done: ${tokenCount} SSE chunks, ${predictedN} server tokens, total=${totalMs.toFixed(0)}ms, TTFT=${ttft.toFixed(0)}ms`);
-
-  // KV cache analysis using server's cache_n field
-  if (totalPromptTokens > 0) {
-    const cacheHitPct = ((cacheN / totalPromptTokens) * 100).toFixed(1);
-    if (cacheN > 0) {
-      console.log(`[LLM] KV CACHE HIT: ${cacheN}/${totalPromptTokens} tokens cached (${cacheHitPct}%), only ${promptN} new tokens processed`);
-    } else {
-      console.log(`[LLM] KV CACHE MISS: 0/${totalPromptTokens} tokens cached — full prompt processing`);
-    }
-  }
-
-  // Prompt vs completion breakdown
-  console.log(`[LLM] Prompt: ${promptN} new tokens in ${promptMs.toFixed(0)}ms (${promptTps.toFixed(1)} t/s)`);
-  console.log(`[LLM] Completion: ${predictedN} tokens in ${predictedMs.toFixed(0)}ms (${predictedTps.toFixed(1)} t/s)`);
-
   const { toolCalls, cleanText, thinking: inlineThinking } = parseCompleted(fullText);
-  // Prefer reasoning_content from SSE (separate field), fall back to inline <think> tags
   const thinking = fullThinking || inlineThinking;
-  console.log('[LLM] Parsed: %d tool calls, %d chars text, %d chars thinking (reasoning_content=%d, inline=%d)',
-    toolCalls.length, cleanText.length, thinking?.length ?? 0, fullThinking.length, inlineThinking?.length ?? 0);
 
   const timings: LLMTimings = {
     prompt_tokens: promptN,

@@ -77,33 +77,6 @@ registerTool({
   },
 });
 
-// ── get_balances ────────────────────────────────────────────────────
-
-registerTool({
-  name: 'get_balances',
-  description: 'Get current balances for all or a specific account. Use when calculating networth or checking account status.',
-  parameters: {
-    type: 'object',
-    properties: {
-      account_id: { type: 'string', description: 'Specific account ID' },
-    },
-  },
-  handler(args) {
-    const db = getDb();
-    let sql = 'SELECT id, name, type, classification, current_balance, available_balance, currency FROM accounts WHERE is_active = 1';
-    const params: unknown[] = [];
-    if (args.account_id) { sql += ' AND id = ?'; params.push(args.account_id); }
-    sql += ' ORDER BY classification, current_balance DESC';
-
-    const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
-    return rows.map(r => ({
-      ...r,
-      current_balance: (r.current_balance as number) / 100,
-      available_balance: r.available_balance != null ? (r.available_balance as number) / 100 : null,
-    }));
-  },
-});
-
 // ── get_investments ─────────────────────────────────────────────────
 
 registerTool({
@@ -141,7 +114,7 @@ registerTool({
 
 registerTool({
   name: 'get_recurring_transactions',
-  description: 'Identify recurring transactions (subscriptions, bills, income) by grouping by merchant and detecting regular intervals. Use when analyzing fixed expenses or income patterns.',
+  description: 'Identify recurring transactions (subscriptions, bills, income) by grouping by name/merchant and detecting regular intervals. Use when analyzing fixed expenses or income patterns.',
   parameters: {
     type: 'object',
     properties: {
@@ -153,17 +126,17 @@ registerTool({
     const db = getDb();
     const minOcc = (args.min_occurrences as number) || 3;
 
-    // Group by merchant+direction, find those with regular intervals
+    // Group by name+direction, find those with regular intervals
     const rows = db.prepare(`
-      SELECT merchant_name, direction, COUNT(*) as count,
-             ROUND(AVG(ABS(amount))) as avg_amount,
-             MIN(date) as first_date, MAX(date) as last_date,
-             ABS(amount) as last_amount,
+      SELECT COALESCE(t.merchant_name, t.name) as merchant_name, t.direction, COUNT(*) as count,
+             ROUND(AVG(ABS(t.amount))) as avg_amount,
+             MIN(t.date) as first_date, MAX(t.date) as last_date,
+             ABS(t.amount) as last_amount,
              c.slug as category_slug, c.name as category_name
       FROM transactions t
       LEFT JOIN categories c ON t.category_id = c.id
-      WHERE merchant_name IS NOT NULL AND direction != 'transfer'
-      GROUP BY merchant_name, direction
+      WHERE t.direction != 'transfer'
+      GROUP BY COALESCE(t.merchant_name, t.name), t.direction
       HAVING COUNT(*) >= ?
       ORDER BY AVG(ABS(amount)) DESC
     `).all(minOcc) as Record<string, unknown>[];

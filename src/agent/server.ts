@@ -61,20 +61,9 @@ const server = http.createServer(async (req, res) => {
         'Access-Control-Allow-Origin': '*',
       });
 
-      let eventCount = 0;
       for await (const event of runAgentStream(body)) {
-        const payload = JSON.stringify(event);
-        res.write(`data: ${payload}\n\n`);
-        eventCount++;
-        if (event.type === 'thinking') {
-          process.stdout.write('T');
-        } else if (event.type === 'text') {
-          process.stdout.write('.');
-        } else {
-          console.log(`\n[SSE] ${event.type}:`, event.type === 'tool_call' ? (event as any).name : event.type === 'done' ? 'done' : '');
-        }
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
       }
-      console.log(`\n[SSE] Stream complete: ${eventCount} events`);
 
       res.write('data: [DONE]\n\n');
       res.end();
@@ -106,15 +95,32 @@ const server = http.createServer(async (req, res) => {
       return json(res, getToolDefinitions());
     }
 
-    // GET /simplefin/connections — list all SimpleFIN connections
+    // GET /simplefin/connections — list all SimpleFIN connections with their accounts
     if (req.method === 'GET' && url.pathname === '/simplefin/connections') {
       const db = (await import('../db/index.js')).getDb();
-      const items = db.prepare(`
-        SELECT i.id, i.institution_name, i.status, i.last_synced_at, i.created_at,
-          (SELECT COUNT(*) FROM accounts WHERE simplefin_item_id = i.id AND is_active = 1) as account_count
-        FROM simplefin_items i ORDER BY i.created_at DESC
-      `).all();
-      return json(res, items);
+      const items = db.prepare(`SELECT id, institution_name, status, last_synced_at, created_at FROM simplefin_items ORDER BY created_at DESC`).all() as {
+        id: string; institution_name: string; status: string; last_synced_at: string | null; created_at: string;
+      }[];
+      const acctStmt = db.prepare(`SELECT id, name, type, classification, institution_name, current_balance FROM accounts WHERE simplefin_item_id = ? AND is_active = 1 ORDER BY institution_name, name`);
+      const result = items.map(item => {
+        const accounts = acctStmt.all(item.id) as { id: string; name: string; type: string; classification: string; institution_name: string; current_balance: number }[];
+        // Group accounts by institution
+        const institutions = new Map<string, typeof accounts>();
+        for (const a of accounts) {
+          const key = a.institution_name || 'Unknown';
+          if (!institutions.has(key)) institutions.set(key, []);
+          institutions.get(key)!.push(a);
+        }
+        return {
+          ...item,
+          account_count: accounts.length,
+          institutions: [...institutions.entries()].map(([name, accts]) => ({
+            name,
+            accounts: accts.map(a => ({ id: a.id, name: a.name, type: a.type, classification: a.classification, balance: a.current_balance / 100 })),
+          })),
+        };
+      });
+      return json(res, result);
     }
 
     // DELETE /simplefin/connections/:id — delete a connection and its data

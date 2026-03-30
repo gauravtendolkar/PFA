@@ -40,11 +40,13 @@ export async function sendMessageStream(
   message: string,
   callbacks: StreamCallbacks,
   sessionId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch('/agent/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId }),
+    signal,
   });
 
   if (!res.ok) {

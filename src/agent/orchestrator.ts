@@ -82,8 +82,6 @@ class EventQueue {
 
 /** Streaming agent — yields events in real-time as LLM generates tokens */
 export async function* runAgentStream(request: AgentRequest): AsyncGenerator<StreamEvent> {
-  console.log('[Agent] Starting for:', request.message.slice(0, 80));
-
   let session: Session;
   try {
     session = request.session_id
@@ -108,8 +106,6 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = performance.now();
-    const promptTokenEstimate = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0) / 4; // rough estimate
-    console.log(`[Agent] ── Iteration ${i + 1}/${MAX_ITERATIONS} ── (est. ~${Math.round(promptTokenEstimate)} prompt tokens, ${messages.length} messages)`);
 
     // Use event queue to bridge callbacks → generator
     const eq = new EventQueue();
@@ -159,10 +155,6 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
     messages.push(assistantMsg);
     saveMessage(session.id, assistantMsg, response.thinking);
 
-    const iterEnd = performance.now();
-    const iterMs = iterEnd - iterStart;
-    console.log(`[Agent] ── Iteration ${i + 1} complete ── ${iterMs.toFixed(0)}ms wall time`);
-    console.log(`[Agent]   finish_reason=${response.finish_reason}, tool_calls=${assistantMsg.tool_calls?.length ?? 0}, text=${(assistantMsg.content?.length ?? 0)} chars`);
 
     // No tool calls — done
     if (response.finish_reason !== 'tool_calls' || !assistantMsg.tool_calls?.length) {
@@ -180,7 +172,6 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
     // Execute tool calls
     for (const toolCall of assistantMsg.tool_calls) {
       const toolName = toolCall.function.name;
-      console.log(`[Agent] Executing tool: ${toolName}`);
       yield { type: 'tool_call', name: toolName };
 
       let args: Record<string, unknown> = {};
@@ -198,10 +189,8 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
       let resultStr = JSON.stringify(result);
       const MAX_RESULT_CHARS = 3000;
       if (resultStr.length > MAX_RESULT_CHARS) {
-        console.log(`[Agent] Tool ${toolName}: truncating ${resultStr.length} → ${MAX_RESULT_CHARS} chars`);
         resultStr = resultStr.slice(0, MAX_RESULT_CHARS) + '... (truncated)';
       }
-      console.log(`[Agent] Tool ${toolName} done`);
 
       messages.push({ role: 'tool', content: resultStr, tool_call_id: toolCall.id, name: toolName });
       saveMessage(session.id, { role: 'tool', content: resultStr, tool_call_id: toolCall.id, name: toolName });

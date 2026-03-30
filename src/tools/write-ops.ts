@@ -25,44 +25,6 @@ registerTool({
   },
 });
 
-// ── bulk_categorize_transactions ────────────────────────────────────
-
-registerTool({
-  name: 'bulk_categorize_transactions',
-  description: 'Categorize multiple transactions at once. Use after syncing new transactions.',
-  parameters: {
-    type: 'object',
-    properties: {
-      updates: {
-        type: 'array',
-        description: 'Array of { transaction_id, category_slug }',
-        items: { type: 'object' },
-      },
-    },
-    required: ['updates'],
-  },
-  handler(args) {
-    const db = getDb();
-    const updates = args.updates as { transaction_id: string; category_slug: string }[];
-    let updated = 0;
-
-    const updateStmt = db.prepare("UPDATE transactions SET category_id = ?, updated_at = datetime('now') WHERE id = ?");
-    const getCat = db.prepare('SELECT id FROM categories WHERE slug = ?');
-
-    db.transaction(() => {
-      for (const u of updates) {
-        const cat = getCat.get(u.category_slug) as { id: string } | undefined;
-        if (cat) {
-          const r = updateStmt.run(cat.id, u.transaction_id);
-          updated += r.changes;
-        }
-      }
-    })();
-
-    return { updated_count: updated };
-  },
-});
-
 // ── add_transaction_note ────────────────────────────────────────────
 
 registerTool({

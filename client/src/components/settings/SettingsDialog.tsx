@@ -1,6 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
 import { X, Building2, Trash2, Plus, Loader2, RefreshCw, FileText } from "lucide-react";
 
+interface Account {
+  id: string;
+  name: string;
+  type: string;
+  classification: string;
+  balance: number;
+}
+
+interface Institution {
+  name: string;
+  accounts: Account[];
+}
+
 interface Connection {
   id: string;
   institution_name: string;
@@ -8,6 +21,7 @@ interface Connection {
   last_synced_at: string | null;
   created_at: string;
   account_count: number;
+  institutions: Institution[];
 }
 
 interface SettingsDialogProps {
@@ -125,27 +139,40 @@ const SettingsDialog = ({ open, onClose, onAddConnection }: SettingsDialogProps)
                 </div>
               ) : (
                 connections.map(conn => (
-                  <div key={conn.id} className="flex items-center gap-3 p-3 rounded-lg border border-border">
-                    <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-4 h-4 text-emerald-500" />
+                  <div key={conn.id} className="rounded-lg border border-border overflow-hidden">
+                    <div className="flex items-center gap-3 p-3 bg-secondary/30">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-muted-foreground">
+                          SimpleFIN · {conn.account_count} account{conn.account_count !== 1 ? "s" : ""}
+                          {conn.last_synced_at ? ` · Synced ${formatRelative(conn.last_synced_at)}` : ""}
+                          <span className={`ml-1.5 ${conn.status === "active" ? "text-emerald-500" : "text-destructive"}`}>
+                            {conn.status === "active" ? "Active" : conn.status}
+                          </span>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDelete(conn.id, "this SimpleFIN connection")}
+                        className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                        title="Delete connection"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{conn.institution_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {conn.account_count} account{conn.account_count !== 1 ? "s" : ""}
-                        {conn.last_synced_at ? ` · Synced ${formatRelative(conn.last_synced_at)}` : ""}
-                        <span className={`ml-1.5 ${conn.status === "active" ? "text-emerald-500" : "text-destructive"}`}>
-                          {conn.status === "active" ? "Active" : conn.status}
-                        </span>
-                      </p>
+                    <div className="divide-y divide-border">
+                      {conn.institutions.map(inst => (
+                        <div key={inst.name} className="px-3 py-2">
+                          <p className="text-xs font-semibold text-foreground mb-1">{inst.name}</p>
+                          {inst.accounts.map(acct => (
+                            <div key={acct.id} className="flex items-center justify-between py-0.5">
+                              <span className="text-xs text-muted-foreground">{acct.name}</span>
+                              <span className={`text-xs font-medium ${acct.classification === "liability" ? "text-destructive" : "text-foreground"}`}>
+                                {acct.classification === "liability" ? "-" : ""}${Math.abs(acct.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
                     </div>
-                    <button
-                      onClick={() => handleDelete(conn.id, conn.institution_name)}
-                      className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                      title="Delete connection"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
                 ))
               )}

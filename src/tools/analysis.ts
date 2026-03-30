@@ -1,11 +1,45 @@
 import { getDb } from '../db/index.js';
 import { registerTool } from './registry.js';
 
+// Patterns that indicate internal transfers, not real spending/income
+const TRANSFER_PATTERNS = [
+  'CREDIT CRD', 'AUTOPAY', 'AUTOMATIC PAYMENT', 'THANK YOU',
+  'TRANSFER TO', 'TRANSFER FROM', 'XFER', 'MONEYLINE',
+  'FID BKG SVC', 'PAYMENT - THANK',
+];
+
+function isTransfer(name: string): boolean {
+  const upper = name.toUpperCase();
+  return TRANSFER_PATTERNS.some(p => upper.includes(p));
+}
+
+/** Exclude transfer-like transactions from spending/income queries */
+function transferExclusionSQL(): string {
+  return TRANSFER_PATTERNS.map(() => "t.name NOT LIKE ?").join(' AND ');
+}
+function transferExclusionParams(): string[] {
+  return TRANSFER_PATTERNS.map(p => `%${p}%`);
+}
+
+/** Returns categorization stats for context */
+function getCategorisationStats(db: ReturnType<typeof getDb>): { total: number; uncategorized: number; pct_uncategorized: number } {
+  const row = db.prepare(`
+    SELECT COUNT(*) as total,
+           SUM(CASE WHEN category_id IS NULL THEN 1 ELSE 0 END) as uncategorized
+    FROM transactions
+  `).get() as { total: number; uncategorized: number };
+  return {
+    total: row.total,
+    uncategorized: row.uncategorized,
+    pct_uncategorized: row.total > 0 ? Math.round((row.uncategorized / row.total) * 100) : 0,
+  };
+}
+
 // ── compute_spending_summary ────────────────────────────────────────
 
 registerTool({
   name: 'compute_spending_summary',
-  description: 'Calculate total spending broken down by category for a date range. Use when the user asks "where does my money go?" or wants a spending breakdown.',
+  description: 'Calculate total spending broken down by category for a date range. Excludes internal transfers (credit card payments, investment transfers). Check the categorization_warning — if most transactions are uncategorized, tell the user and offer to categorize them first.',
   parameters: {
     type: 'object',
     properties: {
@@ -26,7 +60,7 @@ registerTool({
 
     switch (group_by) {
       case 'merchant':
-        groupCol = 't.merchant_name'; groupName = 'merchant_name'; break;
+        groupCol = "COALESCE(t.merchant_name, t.name)"; groupName = 'merchant_name'; break;
       case 'week':
         groupCol = "strftime('%Y-W%W', t.date)"; groupName = 'week'; break;
       case 'month':
@@ -37,8 +71,8 @@ registerTool({
         joins = `LEFT JOIN categories c ON t.category_id = c.id LEFT JOIN categories pc ON c.parent_id = pc.id`;
     }
 
-    let where = "t.direction = 'outflow' AND t.date >= ? AND t.date <= ?";
-    const params: unknown[] = [start_date, end_date];
+    let where = `t.direction = 'outflow' AND t.date >= ? AND t.date <= ? AND ${transferExclusionSQL()}`;
+    const params: unknown[] = [start_date, end_date, ...transferExclusionParams()];
     if (account_id) { where += ' AND t.account_id = ?'; params.push(account_id); }
 
     const rows = db.prepare(`
@@ -50,6 +84,26 @@ registerTool({
     `).all(...params) as { name: string | null; total: number; transaction_count: number }[];
 
     const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+    const catStats = getCategorisationStats(db);
+
+    // If mostly uncategorized and grouping by category, also return top transaction names
+    // so the LLM can reason about what the spending is (e.g. "WHOLEFDS" = groceries)
+    let uncategorized_breakdown: { name: string; amount: number; count: number }[] | undefined;
+    if (group_by === 'category' && catStats.pct_uncategorized > 30) {
+      const uncatRows = db.prepare(`
+        SELECT t.name, SUM(t.amount) as total, COUNT(*) as count
+        FROM transactions t
+        WHERE t.direction = 'outflow' AND t.date >= ? AND t.date <= ? AND t.category_id IS NULL AND ${transferExclusionSQL()}
+        ${account_id ? 'AND t.account_id = ?' : ''}
+        GROUP BY t.name ORDER BY SUM(t.amount) DESC LIMIT 30
+      `).all(...[start_date, end_date, ...transferExclusionParams(), ...(account_id ? [account_id] : [])]) as { name: string; total: number; count: number }[];
+
+      uncategorized_breakdown = uncatRows.map(r => ({
+        name: r.name,
+        amount: r.total / 100,
+        count: r.count,
+      }));
+    }
 
     return {
       total: grandTotal / 100,
@@ -59,6 +113,10 @@ registerTool({
         percentage: grandTotal > 0 ? Math.round((r.total / grandTotal) * 1000) / 10 : 0,
         transaction_count: r.transaction_count,
       })),
+      uncategorized_breakdown,
+      note: catStats.pct_uncategorized > 30
+        ? `${catStats.pct_uncategorized}% of transactions are uncategorized. The uncategorized_breakdown field contains raw transaction names — use these to infer spending categories (e.g. "WHOLEFDS" = groceries, "SUNOCO" = gas).`
+        : undefined,
     };
   },
 });
@@ -67,7 +125,7 @@ registerTool({
 
 registerTool({
   name: 'compute_income_summary',
-  description: 'Calculate total income broken down by source for a date range. Use when analyzing earnings or computing savings rate.',
+  description: 'Calculate total income broken down by source for a date range. Excludes internal transfers (credit card payments received, etc.).',
   parameters: {
     type: 'object',
     properties: {
@@ -87,16 +145,16 @@ registerTool({
     switch (group_by) {
       case 'month': groupCol = "strftime('%Y-%m', t.date)"; break;
       case 'account': groupCol = 'a.name'; joins = 'LEFT JOIN accounts a ON t.account_id = a.id'; break;
-      default: groupCol = "COALESCE(t.merchant_name, c.name, 'Unknown')"; joins = 'LEFT JOIN categories c ON t.category_id = c.id'; break;
+      default: groupCol = "COALESCE(t.merchant_name, t.name, 'Unknown')"; joins = ''; break;
     }
 
     const rows = db.prepare(`
       SELECT ${groupCol} as name, SUM(ABS(t.amount)) as total, COUNT(*) as count
       FROM transactions t ${joins}
-      WHERE t.direction = 'inflow' AND t.date >= ? AND t.date <= ?
+      WHERE t.direction = 'inflow' AND t.date >= ? AND t.date <= ? AND ${transferExclusionSQL()}
       GROUP BY ${groupCol}
       ORDER BY SUM(ABS(t.amount)) DESC
-    `).all(start_date, end_date) as { name: string | null; total: number; count: number }[];
+    `).all(start_date, end_date, ...transferExclusionParams()) as { name: string | null; total: number; count: number }[];
 
     const grandTotal = rows.reduce((s, r) => s + r.total, 0);
 
@@ -130,17 +188,17 @@ registerTool({
     const db = getDb();
     const { start_date, end_date, interval = 'total' } = args as Record<string, string>;
 
-    const groupExpr = interval === 'monthly' ? "strftime('%Y-%m', date)" : interval === 'quarterly' ? "strftime('%Y', date) || '-Q' || ((CAST(strftime('%m', date) AS INTEGER) - 1) / 3 + 1)" : "'total'";
+    const groupExpr = interval === 'monthly' ? "strftime('%Y-%m', t.date)" : interval === 'quarterly' ? "strftime('%Y', t.date) || '-Q' || ((CAST(strftime('%m', t.date) AS INTEGER) - 1) / 3 + 1)" : "'total'";
 
     const rows = db.prepare(`
       SELECT ${groupExpr} as period,
-             SUM(CASE WHEN direction = 'inflow' THEN ABS(amount) ELSE 0 END) as income,
-             SUM(CASE WHEN direction = 'outflow' THEN amount ELSE 0 END) as spending
-      FROM transactions
-      WHERE date >= ? AND date <= ? AND direction != 'transfer'
+             SUM(CASE WHEN t.direction = 'inflow' THEN ABS(t.amount) ELSE 0 END) as income,
+             SUM(CASE WHEN t.direction = 'outflow' THEN t.amount ELSE 0 END) as spending
+      FROM transactions t
+      WHERE t.date >= ? AND t.date <= ? AND t.direction != 'transfer' AND ${transferExclusionSQL()}
       GROUP BY ${groupExpr}
       ORDER BY period
-    `).all(start_date, end_date) as { period: string; income: number; spending: number }[];
+    `).all(start_date, end_date, ...transferExclusionParams()) as { period: string; income: number; spending: number }[];
 
     const periods = rows.map(r => {
       const income = r.income / 100;
@@ -255,8 +313,8 @@ registerTool({
     const { start_date, end_date, interval = 'monthly', category_slug } = args as Record<string, string>;
 
     const dateExpr = interval === 'weekly' ? "strftime('%Y-W%W', t.date)" : "strftime('%Y-%m', t.date)";
-    let where = "t.direction = 'outflow' AND t.date >= ? AND t.date <= ?";
-    const params: unknown[] = [start_date, end_date];
+    let where = `t.direction = 'outflow' AND t.date >= ? AND t.date <= ? AND ${transferExclusionSQL()}`;
+    const params: unknown[] = [start_date, end_date, ...transferExclusionParams()];
 
     let joins = '';
     if (category_slug) {
@@ -359,19 +417,19 @@ registerTool({
     const db = getDb();
     const { start_date, end_date } = args as Record<string, string>;
 
-    // By source
+    // By source (exclude transfers)
     const bySrc = db.prepare(`
-      SELECT COALESCE(merchant_name, 'Unknown') as source, SUM(ABS(amount)) as total, COUNT(*) as count
-      FROM transactions WHERE direction = 'inflow' AND date >= ? AND date <= ?
+      SELECT COALESCE(t.merchant_name, t.name, 'Unknown') as source, SUM(ABS(t.amount)) as total, COUNT(*) as count
+      FROM transactions t WHERE t.direction = 'inflow' AND t.date >= ? AND t.date <= ? AND ${transferExclusionSQL()}
       GROUP BY source ORDER BY total DESC
-    `).all(start_date, end_date) as { source: string; total: number; count: number }[];
+    `).all(start_date, end_date, ...transferExclusionParams()) as { source: string; total: number; count: number }[];
 
-    // Monthly
+    // Monthly (exclude transfers)
     const monthly = db.prepare(`
-      SELECT strftime('%Y-%m', date) as month, SUM(ABS(amount)) as total
-      FROM transactions WHERE direction = 'inflow' AND date >= ? AND date <= ?
+      SELECT strftime('%Y-%m', t.date) as month, SUM(ABS(t.amount)) as total
+      FROM transactions t WHERE t.direction = 'inflow' AND t.date >= ? AND t.date <= ? AND ${transferExclusionSQL()}
       GROUP BY month ORDER BY month
-    `).all(start_date, end_date) as { month: string; total: number }[];
+    `).all(start_date, end_date, ...transferExclusionParams()) as { month: string; total: number }[];
 
     const grandTotal = bySrc.reduce((s, r) => s + r.total, 0);
     const monthlyAmounts = monthly.map(r => r.total);
@@ -422,10 +480,10 @@ registerTool({
 
     function computePeriod(start: string, end: string) {
       const row = db.prepare(`
-        SELECT SUM(CASE WHEN direction='outflow' THEN amount ELSE 0 END) as spending,
-               SUM(CASE WHEN direction='inflow' THEN ABS(amount) ELSE 0 END) as income
-        FROM transactions WHERE date >= ? AND date <= ? AND direction != 'transfer'
-      `).get(start, end) as { spending: number; income: number };
+        SELECT SUM(CASE WHEN t.direction='outflow' THEN t.amount ELSE 0 END) as spending,
+               SUM(CASE WHEN t.direction='inflow' THEN ABS(t.amount) ELSE 0 END) as income
+        FROM transactions t WHERE t.date >= ? AND t.date <= ? AND t.direction != 'transfer' AND ${transferExclusionSQL()}
+      `).get(start, end, ...transferExclusionParams()) as { spending: number; income: number };
       const spending = (row.spending || 0) / 100;
       const income = (row.income || 0) / 100;
       return { spending, income, savings: income - spending, savings_rate_pct: income > 0 ? Math.round(((income - spending) / income) * 1000) / 10 : 0 };

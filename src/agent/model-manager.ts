@@ -128,16 +128,9 @@ export async function switchModel(modelId: string): Promise<{ success: boolean; 
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  llamaProcess.stdout?.on('data', (data: Buffer) => {
-    process.stdout.write(`[llama] ${data}`);
-  });
-  llamaProcess.stderr?.on('data', (data: Buffer) => {
-    process.stderr.write(`[llama] ${data}`);
-  });
-  llamaProcess.on('exit', (code) => {
-    console.log(`[ModelManager] llama-server exited with code ${code}`);
-    if (llamaProcess?.pid === llamaProcess?.pid) llamaProcess = null;
-  });
+  llamaProcess.stdout?.on('data', () => {});
+  llamaProcess.stderr?.on('data', () => {});
+  llamaProcess.on('exit', () => { llamaProcess = null; });
 
   // Wait for health
   const ready = await waitForReady(llamaPort);

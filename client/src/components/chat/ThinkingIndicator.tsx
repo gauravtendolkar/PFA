@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Brain } from "lucide-react";
+import { Brain } from "lucide-react";
 
 interface ThinkingIndicatorProps {
   status?: string;

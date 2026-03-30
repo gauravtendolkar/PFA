@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { LayoutDashboard, Menu } from "lucide-react";
+import { LayoutDashboard, Menu, Plus } from "lucide-react";
 import ChatHistory from "../sidebar/ChatHistory";
 import ChatArea from "../chat/ChatArea";
 import DashboardPanel from "../dashboard/DashboardPanel";
 import ActivityPanel from "../activity/ActivityPanel";
+import ConnectAccountDialog from "../connect/ConnectAccountDialog";
 import logoImg from "@/assets/logo.png";
 import type { ChatMessage } from "../chat/ChatArea";
 import { sendMessageStream, getSessions, loadSessionMessages, type ToolCallResult, type ActivityItem, type Session } from "@/lib/api";
+
 
 const AppLayout = () => {
   const [leftOpen, setLeftOpen] = useState(true);
@@ -21,6 +23,7 @@ const AppLayout = () => {
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
   const [lastActivity, setLastActivity] = useState<{ items: ActivityItem[]; elapsed: number }>({ items: [], elapsed: 0 });
   const [elapsed, setElapsed] = useState(0);
+  const [connectOpen, setConnectOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval>>(null);
   const startTimeRef = useRef(0);
 
@@ -59,7 +62,15 @@ const AppLayout = () => {
     try {
       await sendMessageStream(content, {
         onActivity(item) {
-          setActivityItems(prev => [...prev, item]);
+          setActivityItems(prev => {
+            // Thinking streams in real-time — update last thinking item in place
+            if (item.kind === 'thinking' && prev.length > 0 && prev[prev.length - 1].kind === 'thinking') {
+              const updated = [...prev];
+              updated[updated.length - 1] = item;
+              return updated;
+            }
+            return [...prev, item];
+          });
         },
         onStatusChange(status) {
           setStatusText(status);
@@ -83,22 +94,21 @@ const AppLayout = () => {
             setRightPanel('dashboard');
           }
 
-          // Persist activity for this turn
+          // Snapshot activity for this turn, attach to message
           setActivityItems(current => {
-            setLastActivity({
-              items: current,
-              elapsed: Math.floor((Date.now() - startTimeRef.current) / 1000),
-            });
+            const finalElapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+            setLastActivity({ items: current, elapsed: finalElapsed });
+
+            setMessages(prev => [...prev, {
+              id: (Date.now() + 1).toString(),
+              role: "agent" as const,
+              content: event.message,
+              activity: current.length > 0 ? [...current] : undefined,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            }]);
+
             return current;
           });
-
-          // Final response → chat message
-          setMessages(prev => [...prev, {
-            id: (Date.now() + 1).toString(),
-            role: "agent" as const,
-            content: event.message,
-            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          }]);
           cleanup();
         },
         onError(msg) {
@@ -149,6 +159,7 @@ const AppLayout = () => {
         id: `${id}-${i}`,
         role: m.role,
         content: m.content,
+        activity: m.activity,
       })));
     } catch {
       setMessages([]);
@@ -157,6 +168,13 @@ const AppLayout = () => {
 
   const toggleRightPanel = useCallback((panel: 'dashboard' | 'activity') => {
     setRightPanel(prev => prev === panel ? 'none' : panel);
+  }, []);
+
+  const handleShowActivity = useCallback((activity?: ActivityItem[]) => {
+    if (activity) {
+      setLastActivity({ items: activity, elapsed: 0 });
+    }
+    setRightPanel('activity');
   }, []);
 
   const displayActivity = isProcessing ? { items: activityItems, elapsed } : lastActivity;
@@ -174,9 +192,15 @@ const AppLayout = () => {
             <span className="font-display text-xl text-foreground leading-none">PFA</span>
           </div>
         </div>
-        <button onClick={() => toggleRightPanel('dashboard')} className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
-          <LayoutDashboard className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setConnectOpen(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-accent hover:bg-accent/90 transition-colors text-accent-foreground font-medium">
+            <Plus className="w-3.5 h-3.5" />
+            Connect an Account
+          </button>
+          <button onClick={() => toggleRightPanel('dashboard')} className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+            <LayoutDashboard className="w-4 h-4" />
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
@@ -200,7 +224,7 @@ const AppLayout = () => {
             streamingText={streamingText}
             hasActivity={hasActivity}
             onSend={handleSend}
-            onOpenActivity={() => toggleRightPanel('activity')}
+            onShowActivity={handleShowActivity}
           />
         </div>
 
@@ -209,10 +233,25 @@ const AppLayout = () => {
             <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={toolResults} />
           )}
           {rightPanel === 'activity' && (
-            <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} />
+            <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={isProcessing} />
           )}
         </div>
+        {rightPanel !== 'none' && (
+          <div className="md:hidden fixed inset-0 z-50 flex justify-end">
+            <div className="absolute inset-0 bg-foreground/10 backdrop-blur-sm" onClick={() => setRightPanel('none')} />
+            <div className="relative z-10">
+              {rightPanel === 'dashboard' && (
+                <DashboardPanel isOpen={true} onToggle={() => setRightPanel('none')} toolResults={toolResults} />
+              )}
+              {rightPanel === 'activity' && (
+                <ActivityPanel isOpen={true} onClose={() => setRightPanel('none')} items={displayActivity.items} elapsed={displayActivity.elapsed} isStreaming={isProcessing} />
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      <ConnectAccountDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
     </div>
   );
 };
@@ -222,7 +261,7 @@ function formatSessionDate(iso: string): string {
 }
 function formatRelativeDate(iso: string): string {
   const now = new Date();
-  const d = new Date(iso + (iso.includes('T') ? '' : 'T00:00:00'));
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const dateStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((todayStart.getTime() - dateStart.getTime()) / 86400000);

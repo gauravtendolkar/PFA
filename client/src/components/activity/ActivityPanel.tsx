@@ -1,3 +1,4 @@
+import { useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Brain, Wrench, CheckCircle2, MessageSquare } from "lucide-react";
 import type { ActivityItem } from "@/lib/api";
@@ -7,9 +8,16 @@ interface ActivityPanelProps {
   onClose: () => void;
   items: ActivityItem[];
   elapsed: number;
+  isStreaming?: boolean;
 }
 
-const ActivityPanel = ({ isOpen, onClose, items, elapsed }: ActivityPanelProps) => {
+const ActivityPanel = ({ isOpen, onClose, items, elapsed, isStreaming }: ActivityPanelProps) => {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [items]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -33,8 +41,9 @@ const ActivityPanel = ({ isOpen, onClose, items, elapsed }: ActivityPanelProps) 
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             <div className="p-4 space-y-1">
               {items.map((item, i) => (
-                <ActivityRow key={i} item={item} />
+                <ActivityRow key={i} item={item} showCursor={!!isStreaming && i === items.length - 1 && item.kind === 'thinking'} />
               ))}
+              <div ref={bottomRef} />
             </div>
           </div>
         </motion.div>
@@ -43,7 +52,7 @@ const ActivityPanel = ({ isOpen, onClose, items, elapsed }: ActivityPanelProps) 
   );
 };
 
-function ActivityRow({ item }: { item: ActivityItem }) {
+function ActivityRow({ item, showCursor }: { item: ActivityItem; showCursor?: boolean }) {
   switch (item.kind) {
     case 'thinking':
       return (
@@ -58,6 +67,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
           <div className="min-w-0">
             <p className="text-[11px] leading-relaxed text-muted-foreground/60 whitespace-pre-wrap font-mono">
               {item.content}
+              {showCursor && <span className="animate-pulse text-accent">▍</span>}
             </p>
           </div>
         </motion.div>

@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => ({
     hmr: { overlay: false },
     proxy: {
       '/agent': 'http://localhost:3120',
+      '/config': 'http://localhost:3120',
+      '/plaid': 'http://localhost:3120',
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),

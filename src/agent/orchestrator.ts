@@ -107,7 +107,9 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
   const thinkingParts: string[] = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    console.log(`[Agent] Iteration ${i + 1}/${MAX_ITERATIONS}`);
+    const iterStart = performance.now();
+    const promptTokenEstimate = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0) / 4; // rough estimate
+    console.log(`[Agent] ── Iteration ${i + 1}/${MAX_ITERATIONS} ── (est. ~${Math.round(promptTokenEstimate)} prompt tokens, ${messages.length} messages)`);
 
     // Use event queue to bridge callbacks → generator
     const eq = new EventQueue();
@@ -155,9 +157,12 @@ export async function* runAgentStream(request: AgentRequest): AsyncGenerator<Str
 
     const assistantMsg = response.message;
     messages.push(assistantMsg);
-    saveMessage(session.id, assistantMsg);
+    saveMessage(session.id, assistantMsg, response.thinking);
 
-    console.log(`[Agent] LLM done: finish_reason=${response.finish_reason}, tool_calls=${assistantMsg.tool_calls?.length ?? 0}, text=${(assistantMsg.content?.length ?? 0)} chars`);
+    const iterEnd = performance.now();
+    const iterMs = iterEnd - iterStart;
+    console.log(`[Agent] ── Iteration ${i + 1} complete ── ${iterMs.toFixed(0)}ms wall time`);
+    console.log(`[Agent]   finish_reason=${response.finish_reason}, tool_calls=${assistantMsg.tool_calls?.length ?? 0}, text=${(assistantMsg.content?.length ?? 0)} chars`);
 
     // No tool calls — done
     if (response.finish_reason !== 'tool_calls' || !assistantMsg.tool_calls?.length) {

@@ -28,16 +28,17 @@ export function listSessions(limit: number = 20): Session[] {
   return db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?').all(limit) as Session[];
 }
 
-export function saveMessage(sessionId: string, msg: ChatMessage): void {
+export function saveMessage(sessionId: string, msg: ChatMessage, thinking?: string | null): void {
   const db = getDb();
   db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, tool_calls, tool_call_id, tool_name, is_error)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, session_id, role, content, thinking, tool_calls, tool_call_id, tool_name, is_error)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuid(),
     sessionId,
     msg.role,
     msg.content ?? null,
+    thinking ?? null,
     msg.tool_calls ? JSON.stringify(msg.tool_calls) : null,
     msg.tool_call_id ?? null,
     msg.name ?? null,
@@ -56,17 +57,22 @@ export function saveMessage(sessionId: string, msg: ChatMessage): void {
   }
 }
 
-export function getSessionMessages(sessionId: string): ChatMessage[] {
+export interface StoredMessage extends ChatMessage {
+  thinking?: string | null;
+}
+
+export function getSessionMessages(sessionId: string): StoredMessage[] {
   const db = getDb();
-  const rows = db.prepare('SELECT role, content, tool_calls, tool_call_id, tool_name FROM messages WHERE session_id = ? ORDER BY created_at').all(sessionId) as {
-    role: string; content: string | null; tool_calls: string | null; tool_call_id: string | null; tool_name: string | null;
+  const rows = db.prepare('SELECT role, content, thinking, tool_calls, tool_call_id, tool_name FROM messages WHERE session_id = ? ORDER BY created_at').all(sessionId) as {
+    role: string; content: string | null; thinking: string | null; tool_calls: string | null; tool_call_id: string | null; tool_name: string | null;
   }[];
 
   return rows.map(r => {
-    const msg: ChatMessage = {
+    const msg: StoredMessage = {
       role: r.role as ChatMessage['role'],
       content: r.content,
     };
+    if (r.thinking) msg.thinking = r.thinking;
     if (r.tool_calls) msg.tool_calls = JSON.parse(r.tool_calls);
     if (r.tool_call_id) msg.tool_call_id = r.tool_call_id;
     if (r.tool_name) msg.name = r.tool_name;

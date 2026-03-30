@@ -14,10 +14,24 @@ CREATE TABLE IF NOT EXISTS plaid_items (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS teller_items (
+  id              TEXT PRIMARY KEY,
+  enrollment_id   TEXT NOT NULL UNIQUE,
+  access_token    TEXT NOT NULL,
+  institution_name TEXT,
+  status          TEXT NOT NULL DEFAULT 'active',
+  error_code      TEXT,
+  last_synced_at  TEXT,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id              TEXT PRIMARY KEY,
   plaid_item_id   TEXT REFERENCES plaid_items(id),
   plaid_account_id TEXT UNIQUE,
+  teller_item_id  TEXT REFERENCES teller_items(id),
+  teller_account_id TEXT UNIQUE,
   name            TEXT NOT NULL,
   type            TEXT NOT NULL,
   subtype         TEXT,
@@ -40,6 +54,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id              TEXT PRIMARY KEY,
   account_id      TEXT NOT NULL REFERENCES accounts(id),
   plaid_id        TEXT UNIQUE,
+  teller_id       TEXT UNIQUE,
   amount          INTEGER NOT NULL,
   date            TEXT NOT NULL,
   name            TEXT NOT NULL,
@@ -151,6 +166,7 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id      TEXT NOT NULL REFERENCES sessions(id),
   role            TEXT NOT NULL,
   content         TEXT,
+  thinking        TEXT,
   tool_calls      TEXT,
   tool_call_id    TEXT,
   tool_name       TEXT,

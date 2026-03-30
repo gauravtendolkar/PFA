@@ -25,10 +25,20 @@ export interface ToolDef {
   parameters: Record<string, unknown>;
 }
 
+export interface LLMTimings {
+  prompt_tokens: number;
+  completion_tokens: number;
+  prompt_ms: number;
+  completion_ms: number;
+  prompt_tokens_per_sec: number;
+  completion_tokens_per_sec: number;
+}
+
 export interface ChatResponse {
   message: ChatMessage;
   thinking: string | null;
   finish_reason: 'stop' | 'tool_calls' | 'length';
+  timings?: LLMTimings;
 }
 
 export interface LLMConfig {
@@ -48,19 +58,39 @@ export function getDefaultLLMConfig(): LLMConfig {
 }
 
 export function formatToolsForPrompt(tools: ToolDef[]): string {
-  // Compact format: one line per tool to minimize tokens
-  const toolLines = tools.map(t => {
-    const requiredParams = t.parameters && typeof t.parameters === 'object' && 'properties' in t.parameters
-      ? Object.keys((t.parameters as any).properties || {}).join(', ')
-      : '';
-    return `- ${t.name}(${requiredParams}): ${t.description}`;
-  }).join('\n');
+  const toolBlocks = tools.map(t => {
+    const schema = t.parameters as Record<string, unknown>;
+    const props = (schema.properties || {}) as Record<string, Record<string, unknown>>;
+    const required = (schema.required || []) as string[];
+
+    const paramLines = Object.entries(props).map(([name, prop]) => {
+      const parts: string[] = [`    "${name}"`];
+      if (prop.type) parts.push(`(${prop.type})`);
+      if (prop.enum) parts.push(`[${(prop.enum as string[]).join(' | ')}]`);
+      const req = required.includes(name) ? 'REQUIRED' : 'optional';
+      parts.push(`— ${req}.`);
+      if (prop.description) parts.push(prop.description as string);
+      return parts.join(' ');
+    });
+
+    const paramBlock = paramLines.length > 0
+      ? `  Parameters:\n${paramLines.join('\n')}`
+      : '  Parameters: none';
+
+    return `### ${t.name}\n${t.description}\n${paramBlock}`;
+  }).join('\n\n');
 
   return `\n\n## Tools
 
-Call tools with <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+To call a tool, output exactly:
+<tool_call>{"name":"tool_name","arguments":{"param":"value"}}</tool_call>
 
-${toolLines}`;
+IMPORTANT:
+- "arguments" must be an object with the parameter names as keys.
+- Always provide all REQUIRED parameters.
+- Dates must be YYYY-MM-DD strings.
+
+${toolBlocks}`;
 }
 
 /** Parse <tool_call> and <think> blocks from completed text */
@@ -122,6 +152,8 @@ export async function chatCompletionStream(
 
   console.log('[LLM] Sending streaming request to', cfg.baseUrl);
 
+  const requestStartTime = performance.now();
+
   const res = await fetch(`${cfg.baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -148,17 +180,18 @@ export async function chatCompletionStream(
   const body = res.body;
   if (!body) throw new Error('Response body is null');
 
+  const firstTokenTime = { value: 0 };
   let fullText = '';
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = '';
   let tokenCount = 0;
+  let lastChunkTimings: any = null;
 
-  // Incremental tag state — O(1) per token instead of O(N) regex rescans
-  let inThink = false;
+  let fullThinking = '';
   let inToolCall = false;
   let tagBuffer = '';
-  const emittedToolCalls = new Set<string>(); // prevent duplicate onToolCall emissions
+  const emittedToolCalls = new Set<string>();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -181,30 +214,33 @@ export async function chatCompletionStream(
           throw new Error(chunk.error.message || JSON.stringify(chunk.error));
         }
 
-        const delta = chunk.choices?.[0]?.delta?.content;
+        // Capture timings from the chunk (llama-server includes these)
+        if (chunk.timings) lastChunkTimings = chunk.timings;
+        if (chunk.usage) lastChunkTimings = { ...lastChunkTimings, ...chunk.usage };
+
+        const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
 
-        fullText += delta;
+        // llama-server puts <think> content in reasoning_content for Qwen3 models
+        const reasoning = delta.reasoning_content;
+        if (reasoning) {
+          tokenCount++;
+          if (tokenCount === 1) firstTokenTime.value = performance.now();
+          fullThinking += reasoning;
+          callbacks.onThinking?.(reasoning);
+          continue;
+        }
+
+        const content = delta.content;
+        if (!content) continue;
+
+        fullText += content;
         tokenCount++;
+        if (tokenCount === 1) firstTokenTime.value = performance.now();
 
-        // Route tokens using incremental state machine
-        tagBuffer += delta;
+        // Route content: detect <tool_call> tags
+        tagBuffer += content;
 
-        // Check if tagBuffer completes a tag
-        if (tagBuffer.includes('<think>')) {
-          inThink = true;
-          tagBuffer = tagBuffer.split('<think>').pop() || '';
-          if (tagBuffer) callbacks.onThinking?.(tagBuffer);
-          tagBuffer = '';
-          continue;
-        }
-        if (tagBuffer.includes('</think>')) {
-          const before = tagBuffer.split('</think>')[0];
-          if (before && inThink) callbacks.onThinking?.(before);
-          inThink = false;
-          tagBuffer = tagBuffer.split('</think>').pop() || '';
-          continue;
-        }
         if (tagBuffer.includes('<tool_call>')) {
           inToolCall = true;
           tagBuffer = '';
@@ -216,13 +252,10 @@ export async function chatCompletionStream(
           continue;
         }
 
-        // If inside a partial tag (starts with '<'), buffer it
+        // Buffer partial tags
         if (tagBuffer.includes('<')) continue;
 
-        // Emit buffered content
-        if (inThink) {
-          callbacks.onThinking?.(tagBuffer);
-        } else if (inToolCall) {
+        if (inToolCall) {
           const nameMatch = fullText.match(/<tool_call>[^]*?"name"\s*:\s*"([^"]+)"/);
           if (nameMatch && !emittedToolCalls.has(nameMatch[1])) {
             emittedToolCalls.add(nameMatch[1]);
@@ -240,14 +273,54 @@ export async function chatCompletionStream(
     }
   }
 
-  console.log(`[LLM] Stream done: ${tokenCount} tokens`);
+  const requestEndTime = performance.now();
+  const totalMs = requestEndTime - requestStartTime;
+  const ttft = firstTokenTime.value ? firstTokenTime.value - requestStartTime : totalMs;
+
   if (tokenCount === 0) {
     console.error('[LLM] WARNING: Zero tokens. Buffer:', sseBuffer.slice(0, 300));
   }
 
-  const { toolCalls, cleanText, thinking } = parseCompleted(fullText);
-  console.log('[LLM] Parsed: %d tool calls, %d chars text, %d chars thinking',
-    toolCalls.length, cleanText.length, thinking?.length ?? 0);
+  // Extract server-side timings
+  const cacheN = lastChunkTimings?.cache_n ?? 0;
+  const promptN = lastChunkTimings?.prompt_n ?? 0;
+  const predictedN = lastChunkTimings?.predicted_n ?? 0;
+  const promptMs = lastChunkTimings?.prompt_ms ?? 0;
+  const predictedMs = lastChunkTimings?.predicted_ms ?? 0;
+  const promptTps = lastChunkTimings?.prompt_per_second ?? 0;
+  const predictedTps = lastChunkTimings?.predicted_per_second ?? 0;
+  const totalPromptTokens = cacheN + promptN;
+
+  console.log(`[LLM] Stream done: ${tokenCount} SSE chunks, ${predictedN} server tokens, total=${totalMs.toFixed(0)}ms, TTFT=${ttft.toFixed(0)}ms`);
+
+  // KV cache analysis using server's cache_n field
+  if (totalPromptTokens > 0) {
+    const cacheHitPct = ((cacheN / totalPromptTokens) * 100).toFixed(1);
+    if (cacheN > 0) {
+      console.log(`[LLM] KV CACHE HIT: ${cacheN}/${totalPromptTokens} tokens cached (${cacheHitPct}%), only ${promptN} new tokens processed`);
+    } else {
+      console.log(`[LLM] KV CACHE MISS: 0/${totalPromptTokens} tokens cached — full prompt processing`);
+    }
+  }
+
+  // Prompt vs completion breakdown
+  console.log(`[LLM] Prompt: ${promptN} new tokens in ${promptMs.toFixed(0)}ms (${promptTps.toFixed(1)} t/s)`);
+  console.log(`[LLM] Completion: ${predictedN} tokens in ${predictedMs.toFixed(0)}ms (${predictedTps.toFixed(1)} t/s)`);
+
+  const { toolCalls, cleanText, thinking: inlineThinking } = parseCompleted(fullText);
+  // Prefer reasoning_content from SSE (separate field), fall back to inline <think> tags
+  const thinking = fullThinking || inlineThinking;
+  console.log('[LLM] Parsed: %d tool calls, %d chars text, %d chars thinking (reasoning_content=%d, inline=%d)',
+    toolCalls.length, cleanText.length, thinking?.length ?? 0, fullThinking.length, inlineThinking?.length ?? 0);
+
+  const timings: LLMTimings = {
+    prompt_tokens: promptN,
+    completion_tokens: predictedN,
+    prompt_ms: promptMs,
+    completion_ms: predictedMs,
+    prompt_tokens_per_sec: promptTps,
+    completion_tokens_per_sec: predictedTps,
+  };
 
   const message: ChatMessage = { role: 'assistant', content: cleanText || null };
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
@@ -256,6 +329,7 @@ export async function chatCompletionStream(
     message,
     thinking,
     finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+    timings,
   };
 }
 

@@ -5,16 +5,18 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch src/index.ts",
+    "dev": "concurrently -n llm,agent,client -c blue,green,yellow \"npm run start:llm\" \"npm run start:agent\" \"npm run start:client\"",
+    "dev:no-llm": "concurrently -n agent,client -c green,yellow \"npm run start:agent\" \"npm run start:client\"",
     "start": "node dist/index.js",
+    "start:llm": "bash scripts/start-llm.sh",
+    "start:agent": "tsx src/agent/server.ts",
+    "start:client": "cd client && npx vite --port 5173",
+    "setup": "tsx scripts/setup.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "plaid:link": "tsx src/plaid/link-cli.ts",
     "plaid:sync": "tsx src/plaid/sync.ts",
     "test": "vitest run",
-    "agent": "tsx src/agent/cli.ts",
-    "serve": "tsx src/agent/server.ts",
-    "client": "cd client && npx vite --port 5173",
-    "dev:all": "npm run serve & cd client && npx vite --port 5173"
+    "agent": "tsx src/agent/cli.ts"
   },
   "license": "MIT",
   "dependencies": {
@@ -29,6 +31,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/uuid": "^10.0.0",
+    "concurrently": "^9.2.1",
     "vitest": "^4.1.1"
   }
 }

@@ -67,11 +67,15 @@ export async function sendMessageStream(
   // We can't know until the next event, so we buffer and decide on transition.
   let pendingTextIsIntermediate = false;
 
-  function flushThinking() {
+  /** Stream thinking to activity panel in real-time (updates in place) */
+  function streamThinking() {
     if (thinkingAccum) {
       callbacks.onActivity({ kind: 'thinking', content: thinkingAccum });
-      thinkingAccum = '';
     }
+  }
+
+  function finalizeThinking() {
+    thinkingAccum = '';
   }
 
   /** Flush buffered text as intermediate activity (NOT final response) */
@@ -103,12 +107,13 @@ export async function sendMessageStream(
             // If we had pending text and now we're thinking again → it was intermediate
             if (textAccum) flushTextAsActivity();
             thinkingAccum += event.content;
+            streamThinking(); // live-update thinking in activity panel
             callbacks.onStatusChange('Thinking...');
             pendingTextIsIntermediate = false;
             break;
 
           case 'text':
-            flushThinking();
+            finalizeThinking();
             textAccum += event.content;
             // Optimistically stream to chat — if a tool_call follows, we'll move it to activity
             callbacks.onStreamText(textAccum);
@@ -118,7 +123,7 @@ export async function sendMessageStream(
           case 'tool_call':
             if (seenToolCalls.has(event.name)) break;
             seenToolCalls.add(event.name);
-            flushThinking();
+            finalizeThinking();
             // Text before a tool_call is intermediate — move to activity, clear from chat
             if (textAccum) {
               flushTextAsActivity();
@@ -137,7 +142,7 @@ export async function sendMessageStream(
             break;
 
           case 'done':
-            flushThinking();
+            finalizeThinking();
             // Don't flush remaining text to activity — it's the final response
             // (it's already being streamed to chat via onStreamText)
             textAccum = '';
@@ -168,20 +173,52 @@ export async function getSessions(): Promise<Session[]> {
   return res.json();
 }
 
-/** Load messages for a session and convert to UI ChatMessage format */
-export async function loadSessionMessages(sessionId: string): Promise<{ role: 'user' | 'agent'; content: string; timestamp?: string }[]> {
+export interface LoadedMessage {
+  role: 'user' | 'agent';
+  content: string;
+  activity?: ActivityItem[];
+}
+
+/** Load session messages. Activity is derived from the messages themselves — single source of truth. */
+export async function loadSessionMessages(sessionId: string): Promise<LoadedMessage[]> {
   const res = await fetch(`/agent/sessions/${sessionId}/messages`);
-  const raw = await res.json() as { role: string; content: string | null }[];
-  const uiMessages: { role: 'user' | 'agent'; content: string; timestamp?: string }[] = [];
+  const raw = await res.json() as {
+    role: string;
+    content: string | null;
+    thinking?: string | null;
+    tool_calls?: { function: { name: string } }[] | null;
+    name?: string | null;
+  }[];
+
+  const uiMessages: LoadedMessage[] = [];
+  let activity: ActivityItem[] = [];
 
   for (const msg of raw) {
     if (msg.role === 'user' && msg.content) {
+      activity = [];
       uiMessages.push({ role: 'user', content: msg.content });
-    } else if (msg.role === 'assistant' && msg.content) {
-      uiMessages.push({ role: 'agent', content: msg.content });
+    } else if (msg.role === 'assistant') {
+      if (msg.thinking) activity.push({ kind: 'thinking', content: msg.thinking });
+      if (msg.tool_calls?.length) {
+        // Intermediate assistant message — tool calls coming next
+      } else if (msg.content) {
+        // Final assistant response for this turn
+        uiMessages.push({
+          role: 'agent',
+          content: msg.content,
+          activity: activity.length > 0 ? activity : undefined,
+        });
+        activity = [];
+      }
+    } else if (msg.role === 'tool') {
+      const name = msg.name ?? 'tool';
+      activity.push({ kind: 'tool_call', name });
+      let result: unknown = msg.content;
+      try { result = JSON.parse(msg.content ?? ''); } catch { /* keep as string */ }
+      activity.push({ kind: 'tool_result', name, result });
     }
-    // Skip system, tool messages — they're internal
   }
 
   return uiMessages;
 }
+

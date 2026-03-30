@@ -39,6 +39,9 @@ Thumbs.db
 *.swo
 *~
 
+# Media
+*.mp4
+
 # Logs
 *.log
 

@@ -38,10 +38,36 @@ export function migrate(): void {
     console.log('Seeded %d categories', (db.prepare('SELECT COUNT(*) as n FROM categories').get() as { n: number }).n);
   }
 
-  // Record schema version
+  // Migrations
   const version = db.prepare('SELECT MAX(version) as v FROM schema_version').get() as { v: number | null };
   if (!version.v || version.v < 1) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(1);
+  }
+
+  // v2: Add thinking column to messages
+  if (!version.v || version.v < 2) {
+    const cols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
+    if (!cols.some(c => c.name === 'thinking')) {
+      db.exec("ALTER TABLE messages ADD COLUMN thinking TEXT");
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(2);
+  }
+
+  // v3: Add Teller support (teller_items table + teller columns on accounts/transactions)
+  if (!version.v || version.v < 3) {
+    // teller_items table is created by schema.sql above (CREATE IF NOT EXISTS)
+    const acctCols = db.prepare("PRAGMA table_info(accounts)").all() as { name: string }[];
+    if (!acctCols.some(c => c.name === 'teller_item_id')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN teller_item_id TEXT REFERENCES teller_items(id)");
+    }
+    if (!acctCols.some(c => c.name === 'teller_account_id')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN teller_account_id TEXT UNIQUE");
+    }
+    const txnCols = db.prepare("PRAGMA table_info(transactions)").all() as { name: string }[];
+    if (!txnCols.some(c => c.name === 'teller_id')) {
+      db.exec("ALTER TABLE transactions ADD COLUMN teller_id TEXT UNIQUE");
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(3);
   }
 
   console.log('Database ready at', config.dbPath);

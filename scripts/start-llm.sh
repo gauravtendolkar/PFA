@@ -5,14 +5,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
-MODEL="${LLM_MODEL_PATH:-./models/Qwen3.5-9B.Q4_K_M.gguf}"
+MODEL="${LLM_MODEL_PATH:-./models/Qwen3.5-4B.Q4_K_M.gguf}"
 PORT="${LLM_PORT:-8080}"
 CTX="${LLM_CTX_SIZE:-16384}"
 SERVER="./bin/llama-server"
 
 if [ ! -f "$MODEL" ]; then
   echo "Model not found at $MODEL"
-  echo "Download: .venv/bin/hf download Jackrong/Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-GGUF Qwen3.5-9B.Q4_K_M.gguf --local-dir ./models"
+  echo "Download: .venv/bin/hf download Jackrong/Qwen3.5-4B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF Qwen3.5-4B.Q4_K_M.gguf --local-dir ./models"
   exit 1
 fi
 

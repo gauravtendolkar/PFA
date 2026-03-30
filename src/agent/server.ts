@@ -12,6 +12,8 @@ import { migrate } from '../db/index.js';
 import { runAgentStream, runAgent, type AgentRequest } from './orchestrator.js';
 import { listSessions, getSessionMessages } from './session.js';
 import { getToolDefinitions } from '../tools/index.js';
+import { detectCurrentModel, cleanup } from './model-manager.js';
+import { config } from '../config/index.js';
 
 const PORT = parseInt(process.env.PFA_PORT || '3120', 10);
 
@@ -105,6 +107,42 @@ const server = http.createServer(async (req, res) => {
       return json(res, getToolDefinitions());
     }
 
+    // GET /config — non-sensitive config for the frontend
+    if (req.method === 'GET' && url.pathname === '/config') {
+      return json(res, {
+        plaid: { enabled: config.plaid.enabled, env: config.plaid.env },
+      });
+    }
+
+    // POST /plaid/link-token — create a Plaid Link token
+    if (req.method === 'POST' && url.pathname === '/plaid/link-token') {
+      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to .env' }, 400);
+      const { createLinkToken } = await import('../plaid/link.js');
+      const linkToken = await createLinkToken();
+      return json(res, { link_token: linkToken });
+    }
+
+    // POST /plaid/exchange — exchange a public token from Plaid Link
+    if (req.method === 'POST' && url.pathname === '/plaid/exchange') {
+      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured' }, 400);
+      const { exchangePublicToken } = await import('../plaid/link.js');
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { error: 'Invalid JSON' }, 400); }
+      if (!body.public_token) return json(res, { error: 'public_token is required' }, 400);
+      const itemId = await exchangePublicToken(body.public_token);
+      return json(res, { item_id: itemId });
+    }
+
+    // POST /plaid/sync — trigger a Plaid sync
+    if (req.method === 'POST' && url.pathname === '/plaid/sync') {
+      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured' }, 400);
+      const { sync } = await import('../plaid/sync.js');
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(await readBody(req)); } catch { /* no body is fine */ }
+      const results = await sync(body.item_id as string | undefined);
+      return json(res, results);
+    }
+
     json(res, { error: 'Not found' }, 404);
   } catch (err: any) {
     console.error('Request error:', err);
@@ -113,7 +151,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 migrate();
+detectCurrentModel();
 server.timeout = 10 * 60 * 1000;
+
+process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+process.on('SIGINT', () => { cleanup(); process.exit(0); });
 server.listen(PORT, () => {
   console.log(`PFA agent server running on http://localhost:${PORT}`);
   console.log('  POST /agent/message      — SSE streaming');

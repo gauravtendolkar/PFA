@@ -203,6 +203,10 @@ registerTool({
     },
   },
   async handler(args) {
+    const { config } = await import('../config/index.js');
+    if (!config.plaid.enabled) {
+      return { error: 'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to your .env file. Get free dev keys at https://dashboard.plaid.com' };
+    }
     const { sync } = await import('../plaid/sync.js');
     const results = await sync(args.item_id as string | undefined);
     return results.map(r => ({

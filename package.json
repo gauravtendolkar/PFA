@@ -13,8 +13,7 @@
     "start:client": "cd client && npx vite --port 5173",
     "setup": "tsx scripts/setup.ts",
     "db:migrate": "tsx src/db/migrate.ts",
-    "plaid:link": "tsx src/plaid/link-cli.ts",
-    "plaid:sync": "tsx src/plaid/sync.ts",
+    "sync": "tsx src/simplefin/sync.ts",
     "test": "vitest run",
     "agent": "tsx src/agent/cli.ts"
   },
@@ -22,7 +21,6 @@
   "dependencies": {
     "better-sqlite3": "^12.8.0",
     "dotenv": "^17.3.1",
-    "plaid": "^41.4.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "uuid": "^13.0.0"

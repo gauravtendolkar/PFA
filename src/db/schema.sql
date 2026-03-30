@@ -14,10 +14,9 @@ CREATE TABLE IF NOT EXISTS plaid_items (
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS teller_items (
+CREATE TABLE IF NOT EXISTS simplefin_items (
   id              TEXT PRIMARY KEY,
-  enrollment_id   TEXT NOT NULL UNIQUE,
-  access_token    TEXT NOT NULL,
+  access_url      TEXT NOT NULL,
   institution_name TEXT,
   status          TEXT NOT NULL DEFAULT 'active',
   error_code      TEXT,
@@ -30,8 +29,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   id              TEXT PRIMARY KEY,
   plaid_item_id   TEXT REFERENCES plaid_items(id),
   plaid_account_id TEXT UNIQUE,
-  teller_item_id  TEXT REFERENCES teller_items(id),
-  teller_account_id TEXT UNIQUE,
+  simplefin_item_id TEXT REFERENCES simplefin_items(id),
+  simplefin_account_id TEXT UNIQUE,
   name            TEXT NOT NULL,
   type            TEXT NOT NULL,
   subtype         TEXT,
@@ -54,7 +53,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   id              TEXT PRIMARY KEY,
   account_id      TEXT NOT NULL REFERENCES accounts(id),
   plaid_id        TEXT UNIQUE,
-  teller_id       TEXT UNIQUE,
+  simplefin_id    TEXT UNIQUE,
   amount          INTEGER NOT NULL,
   date            TEXT NOT NULL,
   name            TEXT NOT NULL,

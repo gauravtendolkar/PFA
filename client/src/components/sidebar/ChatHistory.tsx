@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, MessageSquare, Search, ChevronLeft } from "lucide-react";
+import { Plus, MessageSquare, Search, ChevronLeft, Trash2 } from "lucide-react";
 
 interface ChatSession {
   id: string;
@@ -14,11 +14,12 @@ interface ChatHistoryProps {
   sessions: ChatSession[];
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDelete: (id: string) => void;
   isOpen: boolean;
   onToggle: () => void;
 }
 
-const ChatHistory = ({ sessions, onSelect, onNew, isOpen, onToggle }: ChatHistoryProps) => {
+const ChatHistory = ({ sessions, onSelect, onNew, onDelete, isOpen, onToggle }: ChatHistoryProps) => {
   const [search, setSearch] = useState("");
 
   const filtered = sessions.filter(
@@ -85,25 +86,34 @@ const ChatHistory = ({ sessions, onSelect, onNew, isOpen, onToggle }: ChatHistor
                   {date}
                 </p>
                 {items.map((session) => (
-                  <button
+                  <div
                     key={session.id}
-                    onClick={() => onSelect(session.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg mb-0.5 transition-colors group ${
+                    className={`w-full text-left px-3 py-2.5 rounded-lg mb-0.5 transition-colors group flex items-center ${
                       session.active
                         ? "bg-primary/10 text-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     }`}
                   >
-                    <div className="flex items-start gap-2.5">
-                      <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                      <div className="min-w-0">
+                    <button
+                      onClick={() => onSelect(session.id)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
                         <p className="text-xs font-medium truncate">{session.title}</p>
-                        <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                          {session.preview}
-                        </p>
                       </div>
-                    </div>
-                  </button>
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5 pl-[1.375rem]">
+                        {session.preview}
+                      </p>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(session.id); }}
+                      className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all flex-shrink-0"
+                      title="Delete chat"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 ))}
               </div>
             ))}

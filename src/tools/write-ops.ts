@@ -195,26 +195,24 @@ registerTool({
 
 registerTool({
   name: 'trigger_transaction_sync',
-  description: 'Trigger a fresh transaction sync from Plaid. Use when the user asks to refresh their data.',
+  description: 'Trigger a fresh transaction sync from SimpleFIN. Use when the user asks to refresh their bank data.',
   parameters: {
     type: 'object',
     properties: {
-      item_id: { type: 'string', description: 'Specific Plaid item ID to sync (omit for all)' },
+      item_id: { type: 'string', description: 'Specific SimpleFIN item ID to sync (omit for all)' },
     },
   },
   async handler(args) {
-    const { config } = await import('../config/index.js');
-    if (!config.plaid.enabled) {
-      return { error: 'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to your .env file. Get free dev keys at https://dashboard.plaid.com' };
-    }
-    const { sync } = await import('../plaid/sync.js');
+    const { sync } = await import('../simplefin/sync.js');
     const results = await sync(args.item_id as string | undefined);
+    if (results.length === 0) {
+      return { error: 'No SimpleFIN connections found. Connect a bank account first via the Connect Account button.' };
+    }
     return results.map(r => ({
       institution: r.institution,
       transactions_added: r.transactions.added,
-      transactions_modified: r.transactions.modified,
+      transactions_updated: r.transactions.updated,
       accounts_updated: r.accounts,
-      holdings_updated: r.holdings,
     }));
   },
 });

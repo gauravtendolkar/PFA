@@ -53,19 +53,21 @@ export function migrate(): void {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(2);
   }
 
-  // v3: Add Teller support (teller_items table + teller columns on accounts/transactions)
+  // v3: Add SimpleFIN support
   if (!version.v || version.v < 3) {
-    // teller_items table is created by schema.sql above (CREATE IF NOT EXISTS)
+    // simplefin_items table is created by schema.sql above (CREATE IF NOT EXISTS)
     const acctCols = db.prepare("PRAGMA table_info(accounts)").all() as { name: string }[];
-    if (!acctCols.some(c => c.name === 'teller_item_id')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN teller_item_id TEXT REFERENCES teller_items(id)");
+    if (!acctCols.some(c => c.name === 'simplefin_item_id')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN simplefin_item_id TEXT");
     }
-    if (!acctCols.some(c => c.name === 'teller_account_id')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN teller_account_id TEXT UNIQUE");
+    if (!acctCols.some(c => c.name === 'simplefin_account_id')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN simplefin_account_id TEXT");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_simplefin ON accounts(simplefin_account_id)");
     }
     const txnCols = db.prepare("PRAGMA table_info(transactions)").all() as { name: string }[];
-    if (!txnCols.some(c => c.name === 'teller_id')) {
-      db.exec("ALTER TABLE transactions ADD COLUMN teller_id TEXT UNIQUE");
+    if (!txnCols.some(c => c.name === 'simplefin_id')) {
+      db.exec("ALTER TABLE transactions ADD COLUMN simplefin_id TEXT");
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_txn_simplefin ON transactions(simplefin_id)");
     }
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(3);
   }

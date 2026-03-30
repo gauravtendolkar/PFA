@@ -13,7 +13,6 @@ import { runAgentStream, runAgent, type AgentRequest } from './orchestrator.js';
 import { listSessions, getSessionMessages } from './session.js';
 import { getToolDefinitions } from '../tools/index.js';
 import { detectCurrentModel, cleanup } from './model-manager.js';
-import { config } from '../config/index.js';
 
 const PORT = parseInt(process.env.PFA_PORT || '3120', 10);
 
@@ -41,7 +40,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, PUT, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end();
@@ -107,36 +106,82 @@ const server = http.createServer(async (req, res) => {
       return json(res, getToolDefinitions());
     }
 
-    // GET /config — non-sensitive config for the frontend
-    if (req.method === 'GET' && url.pathname === '/config') {
-      return json(res, {
-        plaid: { enabled: config.plaid.enabled, env: config.plaid.env },
-      });
+    // GET /simplefin/connections — list all SimpleFIN connections
+    if (req.method === 'GET' && url.pathname === '/simplefin/connections') {
+      const db = (await import('../db/index.js')).getDb();
+      const items = db.prepare(`
+        SELECT i.id, i.institution_name, i.status, i.last_synced_at, i.created_at,
+          (SELECT COUNT(*) FROM accounts WHERE simplefin_item_id = i.id AND is_active = 1) as account_count
+        FROM simplefin_items i ORDER BY i.created_at DESC
+      `).all();
+      return json(res, items);
     }
 
-    // POST /plaid/link-token — create a Plaid Link token
-    if (req.method === 'POST' && url.pathname === '/plaid/link-token') {
-      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to .env' }, 400);
-      const { createLinkToken } = await import('../plaid/link.js');
-      const linkToken = await createLinkToken();
-      return json(res, { link_token: linkToken });
+    // DELETE /simplefin/connections/:id — delete a connection and its data
+    const connDeleteMatch = url.pathname.match(/^\/simplefin\/connections\/([^/]+)$/);
+    if (req.method === 'DELETE' && connDeleteMatch) {
+      const db = (await import('../db/index.js')).getDb();
+      const itemId = connDeleteMatch[1];
+      db.transaction(() => {
+        // Get account IDs for this connection
+        const accounts = db.prepare('SELECT id FROM accounts WHERE simplefin_item_id = ?').all(itemId) as { id: string }[];
+        for (const acct of accounts) {
+          db.prepare('DELETE FROM transactions WHERE account_id = ?').run(acct.id);
+          db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(acct.id);
+          db.prepare('DELETE FROM holdings WHERE account_id = ?').run(acct.id);
+        }
+        db.prepare('DELETE FROM accounts WHERE simplefin_item_id = ?').run(itemId);
+        db.prepare('DELETE FROM simplefin_items WHERE id = ?').run(itemId);
+      })();
+      return json(res, { success: true });
     }
 
-    // POST /plaid/exchange — exchange a public token from Plaid Link
-    if (req.method === 'POST' && url.pathname === '/plaid/exchange') {
-      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured' }, 400);
-      const { exchangePublicToken } = await import('../plaid/link.js');
+    // DELETE /agent/sessions/:id — delete a session and its messages
+    const sessionDeleteMatch = url.pathname.match(/^\/agent\/sessions\/([^/]+)$/);
+    if (req.method === 'DELETE' && sessionDeleteMatch) {
+      const db = (await import('../db/index.js')).getDb();
+      const sid = sessionDeleteMatch[1];
+      db.transaction(() => {
+        db.prepare('DELETE FROM messages WHERE session_id = ?').run(sid);
+        db.prepare('DELETE FROM sessions WHERE id = ?').run(sid);
+      })();
+      return json(res, { success: true });
+    }
+
+    // GET /settings/prompt — get current system prompt
+    if (req.method === 'GET' && url.pathname === '/settings/prompt') {
+      const fs = await import('fs');
+      const path = await import('path');
+      const promptPath = path.join(import.meta.dirname, 'prompts', 'system.md');
+      const content = fs.readFileSync(promptPath, 'utf-8');
+      return json(res, { content, tags: ['{{TODAY}}'] });
+    }
+
+    // PUT /settings/prompt — update system prompt
+    if (req.method === 'PUT' && url.pathname === '/settings/prompt') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { error: 'Invalid JSON' }, 400); }
-      if (!body.public_token) return json(res, { error: 'public_token is required' }, 400);
-      const itemId = await exchangePublicToken(body.public_token);
+      if (typeof body.content !== 'string') return json(res, { error: 'content is required' }, 400);
+      const fs = await import('fs');
+      const path = await import('path');
+      const promptPath = path.join(import.meta.dirname, 'prompts', 'system.md');
+      fs.writeFileSync(promptPath, body.content);
+      return json(res, { success: true });
+    }
+
+    // POST /simplefin/claim — claim a SimpleFIN setup token
+    if (req.method === 'POST' && url.pathname === '/simplefin/claim') {
+      const { claimAndSave } = await import('../simplefin/link.js');
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { error: 'Invalid JSON' }, 400); }
+      if (!body.setup_token) return json(res, { error: 'setup_token is required' }, 400);
+      const itemId = await claimAndSave(body.setup_token);
       return json(res, { item_id: itemId });
     }
 
-    // POST /plaid/sync — trigger a Plaid sync
-    if (req.method === 'POST' && url.pathname === '/plaid/sync') {
-      if (!config.plaid.enabled) return json(res, { error: 'Plaid is not configured' }, 400);
-      const { sync } = await import('../plaid/sync.js');
+    // POST /simplefin/sync — trigger a SimpleFIN sync
+    if (req.method === 'POST' && url.pathname === '/simplefin/sync') {
+      const { sync } = await import('../simplefin/sync.js');
       let body: Record<string, unknown> = {};
       try { body = JSON.parse(await readBody(req)); } catch { /* no body is fine */ }
       const results = await sync(body.item_id as string | undefined);

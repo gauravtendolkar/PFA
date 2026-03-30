@@ -188,25 +188,13 @@ async function stepCreateEnv() {
     }
   }
 
-  log('Bank sync uses Plaid (bring your own API keys).');
-  log('Get free Development keys at: https://dashboard.plaid.com');
-  log('No business verification needed for dev mode (100 free connections).\n');
-
-  const plaidClientId = await ask('  Plaid Client ID (press Enter to skip): ');
-  let plaidSecret = '';
-  let plaidEnv = 'development';
-  if (plaidClientId) {
-    plaidSecret = await ask('  Plaid Secret: ');
-    plaidEnv = await ask('  Plaid environment [development]: ') || 'development';
-  }
+  log('Bank sync uses SimpleFIN — no API keys needed!');
+  log('Connect your bank in-app after setup. ($1.50/month via SimpleFIN)\n');
 
   const envContent = [
-    '# Bank Connection — Plaid (bring your own keys)',
-    '# Get free dev keys: https://dashboard.plaid.com',
-    '# Dev mode: 100 free connections, no business verification',
-    `PLAID_CLIENT_ID=${plaidClientId}`,
-    `PLAID_SECRET=${plaidSecret}`,
-    `PLAID_ENV=${plaidEnv}`,
+    '# Bank Connection — SimpleFIN (no config needed)',
+    '# Connect your bank in-app via the Connect Account button',
+    '# SimpleFIN: https://bridge.simplefin.org ($1.50/month)',
     '',
     '# Server',
     'PFA_PORT=3120',
@@ -221,12 +209,6 @@ async function stepCreateEnv() {
   ].join('\n');
 
   writeFileSync(envPath, envContent);
-
-  if (!plaidClientId) {
-    warn('Plaid not configured. You can add keys to .env later.');
-    log('The app will still run — you just won\'t be able to connect bank accounts until you add keys.');
-  }
-
   success('.env created');
 }
 

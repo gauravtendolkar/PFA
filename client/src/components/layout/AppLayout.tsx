@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { LayoutDashboard, Menu, Plus } from "lucide-react";
+import { LayoutDashboard, Menu, Plus, Settings } from "lucide-react";
 import ChatHistory from "../sidebar/ChatHistory";
 import ChatArea from "../chat/ChatArea";
 import DashboardPanel from "../dashboard/DashboardPanel";
 import ActivityPanel from "../activity/ActivityPanel";
 import ConnectAccountDialog from "../connect/ConnectAccountDialog";
+import SettingsDialog from "../settings/SettingsDialog";
 import logoImg from "@/assets/logo.png";
 import type { ChatMessage } from "../chat/ChatArea";
 import { sendMessageStream, getSessions, loadSessionMessages, type ToolCallResult, type ActivityItem, type Session } from "@/lib/api";
@@ -24,6 +25,7 @@ const AppLayout = () => {
   const [lastActivity, setLastActivity] = useState<{ items: ActivityItem[]; elapsed: number }>({ items: [], elapsed: 0 });
   const [elapsed, setElapsed] = useState(0);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval>>(null);
   const startTimeRef = useRef(0);
 
@@ -138,6 +140,15 @@ const AppLayout = () => {
     }
   }, [sessionId, rightPanel]);
 
+  const handleDeleteSession = useCallback(async (id: string) => {
+    await fetch(`/agent/sessions/${id}`, { method: 'DELETE' });
+    setSessions(prev => prev.filter(s => s.id !== id));
+    if (sessionId === id) {
+      setSessionId(null);
+      setMessages([]);
+    }
+  }, [sessionId]);
+
   const handleNewSession = useCallback(() => {
     setSessionId(null);
     setMessages([]);
@@ -200,18 +211,21 @@ const AppLayout = () => {
           <button onClick={() => toggleRightPanel('dashboard')} className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
             <LayoutDashboard className="w-4 h-4" />
           </button>
+          <button onClick={() => setSettingsOpen(true)} className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground">
+            <Settings className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="hidden md:flex">
-          <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id)} onNew={handleNewSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
+          <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={leftOpen} onToggle={() => setLeftOpen(false)} />
         </div>
         {leftOpen && (
           <div className="md:hidden fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-foreground/10 backdrop-blur-sm" onClick={() => setLeftOpen(false)} />
             <div className="relative z-10">
-              <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id, true)} onNew={handleNewSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
+              <ChatHistory sessions={sessions} onSelect={(id) => handleSelectSession(id, true)} onNew={handleNewSession} onDelete={handleDeleteSession} isOpen={true} onToggle={() => setLeftOpen(false)} />
             </div>
           </div>
         )}
@@ -252,6 +266,7 @@ const AppLayout = () => {
       </div>
 
       <ConnectAccountDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} onAddConnection={() => setConnectOpen(true)} />
     </div>
   );
 };

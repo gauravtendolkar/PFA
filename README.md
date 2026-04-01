@@ -1,5 +1,11 @@
 # PFA — Personal Finance Agent
 
+<p align="center"><img width="851" height="315" alt="Add a little bit of body text" src="https://github.com/user-attachments/assets/9c82c9fa-19ea-48fb-97c6-63ece3137a41" /></p>
+
+
+https://github.com/user-attachments/assets/b38c8c4d-6038-454c-8312-33dfb96706cc
+
+
 An on-device AI agent for personal finance. Chat with your bank data using a local LLM. All data stays on your machine.
 
 ## Why PFA?

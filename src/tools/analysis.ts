@@ -106,6 +106,7 @@ registerTool({
     }
 
     return {
+      period: { start_date, end_date },
       total: grandTotal / 100,
       groups: rows.map(r => ({
         name: r.name || 'Unknown',
@@ -159,6 +160,7 @@ registerTool({
     const grandTotal = rows.reduce((s, r) => s + r.total, 0);
 
     return {
+      period: { start_date, end_date },
       total: grandTotal / 100,
       sources: rows.map(r => ({
         name: r.name || 'Unknown',
@@ -217,6 +219,7 @@ registerTool({
     const totalSpending = periods.reduce((s, p) => s + p.spending, 0);
 
     return {
+      period: { start_date, end_date },
       periods,
       average_savings_rate_pct: totalIncome > 0 ? Math.round(((totalIncome - totalSpending) / totalIncome) * 1000) / 10 : 0,
     };
@@ -331,14 +334,17 @@ registerTool({
       ORDER BY period
     `).all(...params) as { period: string; total: number; count: number }[];
 
-    return rows.map((r, i) => ({
-      period: r.period,
-      amount: r.total / 100,
-      transaction_count: r.count,
-      vs_previous_pct: i > 0 && rows[i - 1].total > 0
-        ? Math.round(((r.total - rows[i - 1].total) / rows[i - 1].total) * 1000) / 10
-        : null,
-    }));
+    return {
+      period: { start_date, end_date },
+      data: rows.map((r, i) => ({
+        period: r.period,
+        amount: r.total / 100,
+        transaction_count: r.count,
+        vs_previous_pct: i > 0 && rows[i - 1].total > 0
+          ? Math.round(((r.total - rows[i - 1].total) / rows[i - 1].total) * 1000) / 10
+          : null,
+      })),
+    };
   },
 });
 
@@ -391,6 +397,7 @@ registerTool({
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
     return {
+      period: { start_date, end_date },
       total: (total.total || 0) / 100,
       transaction_count: total.count || 0,
       merchant_breakdown: byMerchant.map(r => ({ merchant: r.merchant_name, amount: r.total / 100, count: r.count, avg_per_txn: r.avg_amount / 100 })),
@@ -443,6 +450,7 @@ registerTool({
     const stabilityScore = Math.round(Math.max(0, Math.min(100, (1 - cv) * 100)));
 
     return {
+      period: { start_date, end_date },
       total_earned: grandTotal / 100,
       by_source: bySrc.map(r => ({
         source: r.source,
